@@ -1,0 +1,15 @@
+browser:
+  headless: false
+  slow_mo: 50
+camds:
+  base_url: http://auxiliary_verification.camds.org.cn
+  login_url: http://auxiliary_verification.camds.org.cn/#/login
+  username_saved: false
+  use_keyring: true
+automation:
+  mode: SAVE_DRAFT
+  checkpoint_each_node: true
+  max_retries: 3
+validation:
+  weight_tolerance_percent: 0.5
+  composition_tolerance_percent: 0.1

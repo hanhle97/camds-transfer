@@ -24,9 +24,11 @@ from .logs_tab import LogsTab
 from .mapping_tab import MappingTab
 from .overview_tab import OverviewTab
 from .progress_tab import ProgressTab
+from .captcha_dialog import CaptchaDialog
 from .settings_dialog import SettingsDialog
 from .tree_tab import TreeTab
 from .validation_tab import ValidationTab
+from ..camds.dry_run import write_dry_run_plan
 
 
 class MainWindow(QMainWindow):
@@ -42,6 +44,8 @@ class MainWindow(QMainWindow):
         self.authenticated = False
         self._threads: list[QThread] = []
         self.progress = ImportProgress()
+        self.captcha_dialog: CaptchaDialog | None = None
+        self._active_login_worker: CamdsLoginWorker | None = None
         self._build_ui()
         self._build_menu()
         self.state_machine.state_changed.connect(self._apply_state)
@@ -106,6 +110,12 @@ class MainWindow(QMainWindow):
         self.overview_tab.set_mode(self.mode.currentText())
 
     def _import_not_available(self) -> None:
+        if self.mode.currentText() == "DRY_RUN" and self.document and self.source_path:
+            output = Path("output") / self.source_path.stem / "dry_run_plan.json"
+            plan = write_dry_run_plan(self.document.to_dict(), output)
+            self.logs_tab.append("CAMDS", f"Dry-run complete: {len(plan)} planned operations; no CAMDS data changed")
+            QMessageBox.information(self, "Dry Run Complete", f"{len(plan)} operations were written to:\n{output}")
+            return
         QMessageBox.information(
             self,
             "CAMDS Import",
@@ -211,16 +221,20 @@ class MainWindow(QMainWindow):
         if not resolved:
             QMessageBox.warning(self, "CAMDS Account", "Enter CAMDS credentials in Settings first.")
             return
+        if self.state_machine.state != AppState.CAMDS_LOGIN_REQUIRED and AppState.CAMDS_LOGIN_REQUIRED in self._allowed_states():
+            self.state_machine.transition(AppState.CAMDS_LOGIN_REQUIRED)
         config = BrowserConfig(
             login_url="http://auxiliary_verification.camds.org.cn/#/login",
             storage_state_path=Path(".runtime/camds_storage_state.json"),
             headless=False,
         )
         worker = CamdsLoginWorker(CamdsBrowser(config), resolved)
+        self._active_login_worker = worker
         thread = self._run_worker(worker)
         thread.started.connect(worker.run)
         worker.stage_changed.connect(self._login_stage)
         worker.error.connect(self._worker_error)
+        worker.verification_screenshot.connect(self._show_verification)
         worker.completed.connect(lambda result: self._login_completed(result, resolved.username))
         thread.start()
 
@@ -229,8 +243,26 @@ class MainWindow(QMainWindow):
         if stage == "CAMDS_WAITING_VERIFICATION":
             self.connection_label.setText("◉ CAMDS: Waiting verification")
             self.logs_tab.append("WAIT", "CAMDS requires interactive verification; complete it in the browser")
+            if self.captcha_dialog is None:
+                self.captcha_dialog = CaptchaDialog(self)
+                self.captcha_dialog.code_submitted.connect(self._submit_verification_code)
+            self.captcha_dialog.show()
+
+    def _show_verification(self, image: bytes) -> None:
+        if self.captcha_dialog is None:
+            self.captcha_dialog = CaptchaDialog(self)
+            self.captcha_dialog.code_submitted.connect(self._submit_verification_code)
+        self.captcha_dialog.set_image(image)
+        self.captcha_dialog.show()
+        self.captcha_dialog.raise_()
+
+    def _submit_verification_code(self, code: str) -> None:
+        if self._active_login_worker and code.strip():
+            self._active_login_worker.set_verification_code(code)
 
     def _login_completed(self, result: object, username: str) -> None:
+        if self.captcha_dialog:
+            self.captcha_dialog.close()
         if result.status == LoginStatus.AUTHENTICATED:
             self.authenticated = True
             self.connection_label.setText("✓ CAMDS: Logged in")

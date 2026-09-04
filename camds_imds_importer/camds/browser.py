@@ -26,6 +26,8 @@ class CamdsBrowser:
         self,
         credentials: Credentials,
         stage_callback: Callable[[LoginStatus], None] | None = None,
+        screenshot_callback: Callable[[bytes], None] | None = None,
+        verification_code_provider: Callable[[], str | None] | None = None,
     ) -> LoginResult:
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch(headless=self.config.headless, slow_mo=self.config.slow_mo)
@@ -37,6 +39,8 @@ class CamdsBrowser:
                     login_url=self.config.login_url,
                     storage_state_path=self.config.storage_state_path,
                     stage_callback=stage_callback,
+                    screenshot_callback=screenshot_callback,
+                    verification_code_provider=verification_code_provider,
                 )
             finally:
                 await browser.close()

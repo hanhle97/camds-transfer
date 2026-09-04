@@ -58,4 +58,8 @@ The dependency direction remains PDF -> canonical JSON -> validation -> CAMDS ma
 
 Test Login launches headed Chromium, fills credentials through DOM locators, and performs no MDS operations. CAPTCHA, slider, MFA, and security confirmation remain manual. The integration test runs only when both credential environment variables exist and is selected explicitly with `-m integration`.
 
+When verification is detected, the desktop app shows a verification dialog with the latest browser image and an optional CAPTCHA-code field. A user-entered code is passed to generic CAPTCHA input selectors when available; the tool never reads, derives, or solves the code. Slider verification is completed by the user in the headed browser.
+
+`DRY_RUN` recursively writes `output/<document>/dry_run_plan.json` with intended searches and field values, without modifying CAMDS. `SAVE_DRAFT` and `SUBMIT` remain guarded until authenticated CAMDS page selectors and read-back verification are confirmed.
+
 The CAMDS URL returned the expected page title during development, but its body did not finish rendering from this environment. Live selector confirmation and authenticated URL verification therefore remain pending. Selector strategies prefer roles, labels, placeholders, stable names, and CSS fallbacks; absolute XPath and coordinate automation are not used.

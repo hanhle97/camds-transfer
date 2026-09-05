@@ -26,7 +26,6 @@ from .logs_tab import LogsTab
 from .mapping_tab import MappingTab
 from .overview_tab import OverviewTab
 from .progress_tab import ProgressTab
-from .captcha_dialog import CaptchaDialog
 from .settings_dialog import SettingsDialog
 from .tree_tab import TreeTab
 from .validation_tab import ValidationTab
@@ -58,7 +57,6 @@ class MainWindow(QMainWindow):
         self.authenticated = False
         self._threads: list[QThread] = []
         self.progress = ImportProgress()
-        self.captcha_dialog: CaptchaDialog | None = None
         self._active_login_worker: CamdsLoginWorker | None = None
         self._parse_started_at: float | None = None
         self._selected_page_count: int = 0
@@ -258,7 +256,6 @@ class MainWindow(QMainWindow):
         thread = self._run_worker(worker)
         worker.stage_changed.connect(self._login_stage)
         worker.error.connect(self._worker_error)
-        worker.verification_screenshot.connect(self._show_verification)
         worker.completed.connect(lambda result: self._login_completed(result, resolved.username))
         thread.start()
 
@@ -279,33 +276,10 @@ class MainWindow(QMainWindow):
             return
         self._set_stage(stage)
         if stage == "CAMDS_WAITING_VERIFICATION":
-            self.connection_label.setText("◉ CAMDS: Waiting verification")
-            self.logs_tab.append("WAIT", "CAMDS requires interactive verification; complete it in the browser")
-            if self.captcha_dialog is None:
-                self.captcha_dialog = CaptchaDialog(self)
-                self.captcha_dialog.code_submitted.connect(self._submit_verification_code)
-                self.captcha_dialog.verification_completed.connect(self._verification_completed)
-            self.captcha_dialog.show()
-
-    def _show_verification(self, image: bytes) -> None:
-        if self.captcha_dialog is None:
-            self.captcha_dialog = CaptchaDialog(self)
-            self.captcha_dialog.code_submitted.connect(self._submit_verification_code)
-            self.captcha_dialog.verification_completed.connect(self._verification_completed)
-        self.captcha_dialog.set_image(image)
-        self.captcha_dialog.show()
-        self.captcha_dialog.raise_()
-
-    def _submit_verification_code(self, code: str) -> None:
-        if self._active_login_worker and code.strip():
-            self._active_login_worker.set_verification_code(code)
-
-    def _verification_completed(self) -> None:
-        self.logs_tab.append("WAIT", "Verification marked complete; checking CAMDS session")
+              self.connection_label.setText("◉ CAMDS: Waiting verification")
+              self.logs_tab.append("WAIT", "Complete slider/CAPTCHA in the CAMDS browser window")
 
     def _login_completed(self, result: object, username: str) -> None:
-        if self.captcha_dialog:
-            self.captcha_dialog.close()
         if result.status == LoginStatus.AUTHENTICATED:
             self.authenticated = True
             self.connection_label.setText("✓ CAMDS: Logged in")

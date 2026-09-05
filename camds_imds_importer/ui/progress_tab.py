@@ -18,7 +18,7 @@ class ProgressTab(QWidget):
         layout.addWidget(self.current)
         summary = QGroupBox("CAMDS Import Progress")
         form = QFormLayout(summary)
-        self.labels = {name: QLabel("-") for name in ("Stage", "Completed", "Components", "Materials", "Substances", "Warnings", "Errors", "Elapsed", "Current item", "CAMDS action")}
+        self.labels = {name: QLabel("-") for name in ("Stage", "Completed", "Components", "Materials", "Substances", "Warnings", "Errors", "Elapsed", "ETA", "Rate", "Current item", "CAMDS action")}
         for name, label in self.labels.items():
             form.addRow(f"{name}:", label)
         layout.addWidget(summary)

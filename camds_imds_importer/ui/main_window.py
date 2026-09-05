@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pymupdf
@@ -46,6 +47,7 @@ class MainWindow(QMainWindow):
         self.progress = ImportProgress()
         self.captcha_dialog: CaptchaDialog | None = None
         self._active_login_worker: CamdsLoginWorker | None = None
+        self._parse_started_at: float | None = None
         self._build_ui()
         self._build_menu()
         self.state_machine.state_changed.connect(self._apply_state)
@@ -158,6 +160,7 @@ class MainWindow(QMainWindow):
         if not self.source_path:
             return
         self.state_machine.transition(AppState.PARSING)
+        self._parse_started_at = time.monotonic()
         self._set_overall_busy()
         self._set_stage("PDF_LOADING")
         self.node_label.setText("Current node: Reading PDF pages…")
@@ -167,7 +170,7 @@ class MainWindow(QMainWindow):
         thread.started.connect(worker.run)
         worker.progress_changed.connect(self._set_overall)
         worker.operation_progress_changed.connect(self.progress_tab.set_operation)
-        worker.operation_progress_changed.connect(lambda current, total: self.node_label.setText(f"Current node: Reading PDF page {current} / {total}"))
+        worker.operation_progress_changed.connect(self._page_progress)
         worker.stage_changed.connect(self._set_stage)
         worker.log_message.connect(lambda message: self.logs_tab.append("PARSER", message))
         worker.error.connect(self._worker_error)
@@ -301,6 +304,35 @@ class MainWindow(QMainWindow):
     def _set_overall_busy(self) -> None:
         self.overall.setRange(0, 0)
         self.progress_tab.begin_busy()
+
+    def _page_progress(self, current: int, total: int) -> None:
+        elapsed = time.monotonic() - self._parse_started_at if self._parse_started_at else 0.0
+        self.progress.elapsed_seconds = elapsed
+        if current > 0 and elapsed > 0:
+            rate = current / elapsed
+            remaining = max(total - current, 0)
+            eta = remaining / rate if rate else 0.0
+            self.progress_tab.labels["Rate"].setText(f"{rate:.2f} pages/s")
+            self.progress_tab.labels["ETA"].setText(self._format_duration(eta))
+        else:
+            self.progress_tab.labels["Rate"].setText("Calculating…")
+            self.progress_tab.labels["ETA"].setText("Calculating…")
+        self.progress_tab.labels["Completed"].setText(f"Reading PDF page {current} / {total}")
+        self.progress_tab.labels["Current item"].setText(f"Page {current} of {total}")
+        self.node_label.setText(f"Current node: Reading PDF page {current} / {total} ({max(total - current, 0)} remaining)")
+
+    @staticmethod
+    def _format_duration(seconds: float) -> str:
+        if seconds <= 0:
+            return "< 1 s"
+        whole_seconds = int(seconds)
+        minutes, remainder = divmod(whole_seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours:
+            return f"~{hours}h {minutes}m remaining"
+        if minutes:
+            return f"~{minutes}m {remainder}s remaining"
+        return f"~{remainder}s remaining"
 
     def _set_stage(self, stage: str) -> None:
         readable = stage.replace("_", " ").title()

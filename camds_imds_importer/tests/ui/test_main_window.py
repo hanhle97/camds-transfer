@@ -22,6 +22,17 @@ def test_progress_and_state_updates(monkeypatch) -> None:
     assert window.parse_button.isEnabled()
 
 
+def test_page_progress_reports_remaining_pages_and_eta() -> None:
+    app()
+    window = MainWindow()
+    window._parse_started_at = __import__("time").monotonic() - 10
+    window._page_progress(100, 675)
+    assert "page 100 / 675" in window.node_label.text()
+    assert "575 remaining" in window.node_label.text()
+    assert "pages/s" in window.progress_tab.labels["Rate"].text()
+    assert "remaining" in window.progress_tab.labels["ETA"].text()
+
+
 def test_import_pdf_selection_is_nonblocking_entry(monkeypatch, tmp_path) -> None:
     app()
     pdf_path = tmp_path / "sample.pdf"

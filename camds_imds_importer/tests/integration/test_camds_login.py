@@ -18,7 +18,7 @@ async def test_real_camds_login(tmp_path: Path) -> None:
     if not username or not password:
         pytest.skip("CAMDS_USERNAME and CAMDS_PASSWORD are required")
     browser = CamdsBrowser(BrowserConfig(
-        login_url="http://auxiliary_verification.camds.org.cn/#/login",
+        login_url="https://catarc.camds.org.cn/#/login",
         storage_state_path=tmp_path / "storage.json",
         headless=False,
     ))

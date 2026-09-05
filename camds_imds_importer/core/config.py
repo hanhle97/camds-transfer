@@ -9,8 +9,8 @@ import yaml
 DEFAULT_CONFIG: dict[str, Any] = {
     "browser": {"headless": False, "slow_mo": 50},
     "camds": {
-        "base_url": "http://auxiliary_verification.camds.org.cn",
-        "login_url": "http://auxiliary_verification.camds.org.cn/#/login",
+        "base_url": "https://catarc.camds.org.cn",
+        "login_url": "https://catarc.camds.org.cn/#/login",
         "username_saved": False,
         "use_keyring": True,
     },

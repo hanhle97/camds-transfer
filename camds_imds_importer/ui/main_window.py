@@ -224,7 +224,7 @@ class MainWindow(QMainWindow):
         if self.state_machine.state != AppState.CAMDS_LOGIN_REQUIRED and AppState.CAMDS_LOGIN_REQUIRED in self._allowed_states():
             self.state_machine.transition(AppState.CAMDS_LOGIN_REQUIRED)
         config = BrowserConfig(
-            login_url="http://auxiliary_verification.camds.org.cn/#/login",
+            login_url="https://catarc.camds.org.cn/#/login",
             storage_state_path=Path(".runtime/camds_storage_state.json"),
             headless=False,
         )

@@ -2,8 +2,8 @@ browser:
   headless: false
   slow_mo: 50
 camds:
-  base_url: http://auxiliary_verification.camds.org.cn
-  login_url: http://auxiliary_verification.camds.org.cn/#/login
+  base_url: https://catarc.camds.org.cn
+  login_url: https://catarc.camds.org.cn/#/login
   username_saved: false
   use_keyring: true
 automation:

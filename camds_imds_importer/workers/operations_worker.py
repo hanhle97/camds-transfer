@@ -70,7 +70,7 @@ class OperationsWorker(QThread):
                         except queue.Empty:
                             pass
                         else:
-                            if action not in ("search", "create"):
+                            if action not in ("search", "create", "save"):
                                 self.failed.emit("Unsupported CAMDS operation", operations.editor_open)
                             else:
                                 self.operation_progress.emit("CAMDS: " + ("Searching…" if action == "search" else "Creating MDS root…"))

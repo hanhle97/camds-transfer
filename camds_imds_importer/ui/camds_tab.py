@@ -64,8 +64,11 @@ class CamdsTab(QWidget):
         self.create_notice = QLabel("CAMDS allocates an ID when Create opens. This fills one root only; children, Save, Send and Submit are not automated. Review the form in the browser before closing.")
         self.create_notice.setWordWrap(True)
         create_form.addRow(self.create_notice)
-        self.create_button = QPushButton("Create and fill root (without Save)")
+        self.create_button = QPushButton("Create and fill root")
+        self.save_button = QPushButton("Save node in CAMDS")
+        self.save_button.setEnabled(False)
         create_form.addRow(self.create_button)
+        create_form.addRow(self.save_button)
         forms_layout.addWidget(create_group)
         root.addWidget(self.forms)
         self.results = QTableWidget()
@@ -75,6 +78,7 @@ class CamdsTab(QWidget):
         self.close_button.clicked.connect(self.stop_session)
         self.search_button.clicked.connect(self.search)
         self.create_button.clicked.connect(self.create)
+        self.save_button.clicked.connect(self.save)
         self.load_node_button.clicked.connect(self.load_node)
         self.search_kind.currentTextChanged.connect(self._kind_changed)
         self.create_kind.currentTextChanged.connect(self._kind_changed)
@@ -151,7 +155,7 @@ class CamdsTab(QWidget):
         self._update()
 
     def _submit(self, action, request) -> None:
-        if not self.worker or self.busy or self.editor_open:
+        if not self.worker or self.busy or (self.editor_open and action != "save"):
             return
         try:
             request.validate()
@@ -173,9 +177,13 @@ class CamdsTab(QWidget):
         kind = self.create_kind.currentText()
         self._submit("create", CreateRequest(kind, self.create_name.text().strip(), self.create_number.text().strip(), self.create_mass.text().strip() if kind == "Component" else "", self.create_classification.currentText() if kind == "Material" else "", self.create_remark.toPlainText()))
 
+    def save(self) -> None:
+        self._submit("save", None)
+
     def _result(self, result) -> None:
         self.busy = False
         self.editor_open = result["kind"] == "create"
+        self.save_button.setEnabled(self.editor_open)
         if result["kind"] == "search":
             self.results.setColumnCount(len(result["columns"]))
             self.results.setHorizontalHeaderLabels(result["columns"])
@@ -204,6 +212,7 @@ class CamdsTab(QWidget):
             worker.deleteLater()
         self.busy = False
         self.editor_open = False
+        self.save_button.setEnabled(False)
         self.status.setText((self.last_error + " " if self.last_error else "") + "Browser session closed. Open a new session to continue.")
         self._update()
 
@@ -211,4 +220,4 @@ class CamdsTab(QWidget):
         stopping = self.worker is not None and self.worker.stopping.is_set()
         self.open_button.setEnabled(self.worker is None)
         self.close_button.setEnabled(self.worker is not None and not stopping)
-        self.forms.setEnabled(self.worker is not None and not stopping and not self.busy and not self.editor_open)
+        self.forms.setEnabled(self.worker is not None and not stopping and not self.busy)

@@ -10,6 +10,7 @@ from PySide6.QtCore import QThread, Signal
 from playwright.async_api import async_playwright
 
 from ..camds.operations import CamdsOperations, SEARCH_URL
+from ..camds.tree_import import TreeImporter, DraftBrowser
 
 
 class OperationsWorker(QThread):
@@ -70,11 +71,15 @@ class OperationsWorker(QThread):
                         except queue.Empty:
                             pass
                         else:
-                            if action not in ("search", "create", "save"):
+                            if action not in ("search", "create", "save", "import_tree"):
                                 self.failed.emit("Unsupported CAMDS operation", operations.editor_open)
                             else:
-                                self.operation_progress.emit("CAMDS: " + ("Searching…" if action == "search" else "Creating MDS root…"))
-                                task = asyncio.create_task(getattr(operations, action)(request))
+                                self.operation_progress.emit("CAMDS: " + {"search": "Searching…", "create": "Creating MDS root…", "save": "Saving…", "import_tree": "Importing parsed tree…"}[action])
+                                if action == "import_tree":
+                                    importer = TreeImporter(DraftBrowser(operations), progress=self.operation_progress.emit)
+                                    task = asyncio.create_task(importer.run(request))
+                                else:
+                                    task = asyncio.create_task(getattr(operations, action)(request))
                     await asyncio.sleep(0.1)
             finally:
                 if task is not None and not task.done():

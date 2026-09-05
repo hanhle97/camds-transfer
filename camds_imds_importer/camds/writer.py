@@ -1,1 +1,1 @@
-"""Intentionally empty this iteration: CAMDS writes are not implemented."""
+"""Draft transfer is implemented in tree_import.py; Send/Submit are not implemented."""

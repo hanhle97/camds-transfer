@@ -29,7 +29,7 @@ LOGIN_BUTTON = SelectorStrategy(
 )
 VERIFICATION = SelectorStrategy(
     names=("Captcha", "Verification", "验证码", "滑块验证", "安全验证"),
-    selectors=("[class*='captcha']", "[class*='slider']", "[id*='captcha']", "iframe[src*='captcha']"),
+    selectors=(".drag_verify", "[class*='captcha']", "[class*='slider']", "[id*='captcha']", "iframe[src*='captcha']"),
 )
 VERIFICATION_INPUT = SelectorStrategy(
     labels=("Captcha", "Verification code", "验证码", "校验码"),

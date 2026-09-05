@@ -1,0 +1,1240 @@
+{
+  "schema_version": 1,
+  "observed_at": "2026-09-05",
+  "base_url": "https://catarc.camds.org.cn/",
+  "language": "English",
+  "purpose": "Discovery inventory only. Not an executable action plan. No runtime wiring.",
+  "locator_engine": "Playwright; :text-is and :has are Playwright CSS extensions.",
+  "scopes": {
+    "search": "page, only when no dialog is visible; search fields are outside the empty tabpanel",
+    "create_details": {
+      "role": "tabpanel",
+      "name": "Details",
+      "exact": true
+    },
+    "reference_search": {
+      "role": "dialog",
+      "name": "Detail",
+      "exact": true
+    }
+  },
+  "navigation": [
+    {
+      "key": "create_mds",
+      "href": "#/create/materialDataSheet",
+      "locator": {
+        "css": "a[href=\"#/create/materialDataSheet\"]"
+      },
+      "evidence": "href observed; target visited"
+    },
+    {
+      "key": "create_module",
+      "href": "#/create/componentUnit",
+      "locator": {
+        "css": "a[href=\"#/create/componentUnit\"]"
+      },
+      "evidence": "href observed; target visited"
+    },
+    {
+      "key": "search",
+      "href": "#/seek/seekMaterialDataSheet",
+      "locator": {
+        "css": "a[href=\"#/seek/seekMaterialDataSheet\"]"
+      },
+      "evidence": "href observed; target visited"
+    },
+    {
+      "key": "sent",
+      "href": "#/seek/seekHasBeenSent",
+      "locator": {
+        "css": "a[href=\"#/seek/seekHasBeenSent\"]"
+      },
+      "evidence": "href observed; target visited"
+    },
+    {
+      "key": "received",
+      "href": "#/seek/seekReceived",
+      "locator": {
+        "css": "a[href=\"#/seek/seekReceived\"]"
+      },
+      "evidence": "href observed; target visited"
+    }
+  ],
+  "search": {
+    "tabs": [
+      {
+        "locator": {
+          "role": "tab",
+          "name": "Component",
+          "exact": true
+        },
+        "evidence": "DOM observed",
+        "interaction_verified": true
+      },
+      {
+        "locator": {
+          "role": "tab",
+          "name": "Semicomponent",
+          "exact": true
+        },
+        "evidence": "DOM observed",
+        "interaction_verified": true
+      },
+      {
+        "locator": {
+          "role": "tab",
+          "name": "Material",
+          "exact": true
+        },
+        "evidence": "DOM observed",
+        "interaction_verified": true
+      },
+      {
+        "locator": {
+          "role": "tab",
+          "name": "Basic Substance",
+          "exact": true
+        },
+        "evidence": "DOM observed",
+        "interaction_verified": true
+      },
+      {
+        "locator": {
+          "role": "tab",
+          "name": "All MDSs",
+          "exact": true
+        },
+        "evidence": "DOM observed",
+        "interaction_verified": true
+      }
+    ],
+    "common_fields": [
+      {
+        "label": "version",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"version\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Validity",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Validity\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Sample",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Sample\")) input"
+        },
+        "evidence": "DOM observed"
+      }
+    ],
+    "common_checkboxes": [
+      {
+        "locator": {
+          "role": "checkbox",
+          "name": "LatestVer",
+          "exact": true
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "locator": {
+          "role": "checkbox",
+          "name": "Accepted /Published/ Internally released",
+          "exact": true
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "locator": {
+          "role": "checkbox",
+          "name": "Created (own MDSs/Modules)",
+          "exact": true
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "locator": {
+          "role": "checkbox",
+          "name": "Accepted MDSs",
+          "exact": true
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "locator": {
+          "role": "checkbox",
+          "name": "Published MDSs",
+          "exact": true
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "locator": {
+          "role": "checkbox",
+          "name": "MDSs",
+          "exact": true
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "locator": {
+          "role": "checkbox",
+          "name": "Modules",
+          "exact": true
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "locator": {
+          "role": "checkbox",
+          "name": "last edited by me",
+          "exact": true
+        },
+        "evidence": "DOM observed"
+      }
+    ],
+    "dates": [
+      {
+        "locator": {
+          "placeholder": "Start date",
+          "exact": true
+        },
+        "readonly": true,
+        "initially_disabled": true,
+        "evidence": "DOM observed",
+        "note": "Calendar picker; do not fill readonly inputs. Enable corresponding date checkbox first; picker interaction not tested."
+      },
+      {
+        "locator": {
+          "placeholder": "End date",
+          "exact": true
+        },
+        "readonly": true,
+        "initially_disabled": true,
+        "evidence": "DOM observed",
+        "note": "Calendar picker; do not fill readonly inputs. Enable corresponding date checkbox first; picker interaction not tested."
+      }
+    ],
+    "supplier": {
+      "label": "Supplier:",
+      "locator": {
+        "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Supplier:\")) button"
+      },
+      "evidence": "DOM observed",
+      "initially_disabled": true,
+      "interaction_verified": false
+    },
+    "all_suppliers": {
+      "label": "All",
+      "locator": {
+        "css": ".el-form-item:has(> .el-form-item__label:text-is(\"All\")) input[type=\"checkbox\"]"
+      },
+      "evidence": "DOM observed"
+    },
+    "component": [
+      {
+        "label": "Article Name:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Article Name:\")) input"
+        },
+        "evidence": "DOM observed",
+        "match_count_verified": 1
+      },
+      {
+        "label": "Part/Item No.:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Part/Item No.:\")) input"
+        },
+        "evidence": "DOM observed",
+        "match_count_verified": 1
+      },
+      {
+        "label": "ID:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"ID:\")) input"
+        },
+        "evidence": "DOM observed",
+        "match_count_verified": 1
+      }
+    ],
+    "semicomponent": [
+      {
+        "label": "Article Name:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Article Name:\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Item- /Mat.-No.:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Item- /Mat.-No.:\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "ID:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"ID:\")) input"
+        },
+        "evidence": "DOM observed"
+      }
+    ],
+    "material": [
+      {
+        "label": "Material Name:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Material Name:\")) input"
+        },
+        "evidence": "DOM observed",
+        "match_count_verified": 1
+      },
+      {
+        "label": "Material No.:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Material No.:\")) input"
+        },
+        "evidence": "DOM observed",
+        "match_count_verified": 1
+      },
+      {
+        "label": "ID:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"ID:\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Material Code/Symbol:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Material Code/Symbol:\")) input"
+        },
+        "evidence": "DOM observed",
+        "match_count_verified": 1
+      },
+      {
+        "label": "Trade name:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Trade name:\")) input"
+        },
+        "evidence": "DOM observed",
+        "match_count_verified": 1
+      },
+      {
+        "label": "Material classification:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Material classification:\")) input"
+        },
+        "evidence": "DOM observed",
+        "match_count_verified": 1
+      }
+    ],
+    "material_standard": {
+      "label": "Norm/Standard:",
+      "locator": {
+        "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Norm/Standard:\")) input[placeholder=\"Select\"]"
+      },
+      "evidence": "DOM observed"
+    },
+    "material_standard_number": {
+      "label": "Norm/Standard:",
+      "locator": {
+        "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Norm/Standard:\")) input:not([placeholder])"
+      },
+      "evidence": "DOM observed",
+      "initially_disabled": true
+    },
+    "material_standard_checkbox": {
+      "locator": {
+        "role": "checkbox",
+        "name": "is Standard Material",
+        "exact": true
+      },
+      "evidence": "DOM observed"
+    },
+    "material_trade_language": {
+      "evidence": "DOM observed, exact locator not validated",
+      "display": "CN",
+      "options_in_dom": [
+        "CN",
+        "EN",
+        "FR"
+      ],
+      "note": "Separate unlabeled form item; do not use global Select placeholder."
+    },
+    "all_mds": [
+      {
+        "label": "Material Name:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Material Name:\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Component No., Semicomponent No., Material No.",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Component No., Semicomponent No., Material No.\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "MDS ID",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"MDS ID\")) input"
+        },
+        "evidence": "DOM observed"
+      }
+    ],
+    "substance": [
+      {
+        "label": "Name / Synonym / English Name:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Name / Synonym / English Name:\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "CAS No.:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"CAS No.:\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "EU-Index:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"EU-Index:\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "EC-Index:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"EC-Index:\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Group:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Group:\")) input"
+        },
+        "evidence": "DOM observed"
+      }
+    ],
+    "substance_radio_groups": [
+      {
+        "scope_label": "GADSL category:",
+        "text": "duty-to-declare",
+        "choices": [
+          "yes",
+          "no",
+          "N.A"
+        ]
+      },
+      {
+        "scope_text": "Prohibited",
+        "choices": [
+          "yes",
+          "no",
+          "N.A"
+        ],
+        "note": "No form-item label; scope by the form item containing Prohibited, then exact radio name."
+      },
+      {
+        "scope_label": "REACH-SVHC:",
+        "text": "SVHC",
+        "choices": [
+          "yes",
+          "no",
+          "N.A"
+        ]
+      }
+    ],
+    "buttons": [
+      {
+        "locator": {
+          "role": "button",
+          "name": "Search",
+          "exact": true
+        },
+        "evidence": "DOM observed",
+        "interaction_verified": true
+      },
+      {
+        "locator": {
+          "role": "button",
+          "name": "newSearch",
+          "exact": true
+        },
+        "evidence": "DOM observed",
+        "interaction_verified": true,
+        "note": "Resets active search tab to Component"
+      },
+      {
+        "locator": {
+          "role": "button",
+          "name": "Export",
+          "exact": true
+        },
+        "evidence": "DOM observed",
+        "interaction_verified": false
+      },
+      {
+        "locator": {
+          "role": "button",
+          "name": "Click to enter a wildcard character“?”",
+          "exact": true
+        },
+        "evidence": "DOM observed",
+        "interaction_verified": false
+      }
+    ],
+    "validity_options_in_dom": [
+      "",
+      "Valid",
+      "Obsolete"
+    ],
+    "sample_options_in_dom": [
+      "",
+      "Yes",
+      "No"
+    ]
+  },
+  "results": {
+    "basic_substance": {
+      "headers": [
+        "No.",
+        "Name",
+        "English name",
+        "CAS No.",
+        "EU-Index",
+        "EC-Index",
+        "REACH-SVHC",
+        "Synonym",
+        "GADSL"
+      ],
+      "row_locator": "get_by_role('row').filter(has=page.get_by_role('cell', name=cas, exact=True))",
+      "view": {
+        "locator": {
+          "role": "button",
+          "name": "View",
+          "exact": true
+        },
+        "evidence": "DOM observed",
+        "interaction_verified": true
+      },
+      "detail_dialog": {
+        "locator": {
+          "role": "dialog",
+          "name": "Search MDS",
+          "exact": true
+        },
+        "evidence": "DOM observed"
+      },
+      "verified_query": {
+        "cas": "7440-02-0",
+        "result_count": 1,
+        "name": "Nickel"
+      }
+    },
+    "all_mds": {
+      "headers": [
+        "No.",
+        "Article Name",
+        "Part/Item No., Item- /Mat.-No., Material No.",
+        "ID/Version",
+        "Supplier",
+        "Creation date",
+        "Actions"
+      ],
+      "table_css": "table.el-table__body",
+      "view": {
+        "locator": {
+          "role": "button",
+          "name": "View",
+          "exact": true
+        },
+        "evidence": "DOM observed",
+        "interaction_verified": false
+      },
+      "note": "Fixed-column table duplicates rows and View buttons. Do not use global View or first row. Scope the correct table and match exact ID/version. Main table container selector still needs validation."
+    },
+    "pagination": {
+      "container": ".el-pagination",
+      "previous": ".btn-prev",
+      "next": ".btn-next",
+      "page_size": {
+        "placeholder": "Select",
+        "scope": ".el-pagination"
+      },
+      "go_to": {
+        "role": "spinbutton",
+        "scope": ".el-pagination"
+      },
+      "sizes_in_dom": [
+        "5/page",
+        "10/page",
+        "20/page",
+        "30/page",
+        "50/page"
+      ],
+      "evidence": "DOM observed; page navigation not tested"
+    }
+  },
+  "sent": {
+    "fields": [
+      {
+        "label": "Article Name",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Article Name\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Part/Item/Material No.",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Part/Item/Material No.\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Designated Comp./semi./mat. No.:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Designated Comp./semi./mat. No.:\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "ID:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"ID:\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Version:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Version:\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Which department sent the MDS:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Which department sent the MDS:\")) input"
+        },
+        "evidence": "DOM observed"
+      }
+    ],
+    "date_checkbox": {
+      "label": "Date:",
+      "locator": {
+        "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Date:\")) input[type=\"checkbox\"]"
+      },
+      "evidence": "DOM observed"
+    },
+    "status_checkbox": {
+      "label": "Status",
+      "locator": {
+        "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Status\")) input[type=\"checkbox\"]"
+      },
+      "evidence": "DOM observed"
+    },
+    "status": {
+      "label": "Status",
+      "locator": {
+        "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Status\")) input[placeholder=\"Select\"]"
+      },
+      "evidence": "DOM observed"
+    },
+    "recipient": {
+      "label": "Recipient",
+      "locator": {
+        "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Recipient\")) button"
+      },
+      "evidence": "DOM observed"
+    },
+    "all": {
+      "locator": {
+        "role": "checkbox",
+        "name": "All",
+        "exact": true
+      },
+      "evidence": "DOM observed"
+    },
+    "note": "Filters inspected only; no sent records opened. Sent is a search screen, not Send action."
+  },
+  "received": {
+    "fields": [
+      {
+        "label": "Article Name",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Article Name\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Part/Item/Material No.",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Part/Item/Material No.\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "ID:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"ID:\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Version:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Version:\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Which department the MDS was sent to:",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Which department the MDS was sent to:\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Supplier Code",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Supplier Code\")) input"
+        },
+        "evidence": "DOM observed"
+      }
+    ],
+    "date_checkbox": {
+      "label": "Date:",
+      "locator": {
+        "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Date:\")) input[type=\"checkbox\"]"
+      },
+      "evidence": "DOM observed"
+    },
+    "status_checkbox": {
+      "label": "Status",
+      "locator": {
+        "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Status\")) input[type=\"checkbox\"]"
+      },
+      "evidence": "DOM observed"
+    },
+    "status": {
+      "label": "Status",
+      "locator": {
+        "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Status\")) input[placeholder=\"Select\"]"
+      },
+      "evidence": "DOM observed"
+    },
+    "supplier": {
+      "label": "MDSs supplier",
+      "locator": {
+        "css": ".el-form-item:has(> .el-form-item__label:text-is(\"MDSs supplier\")) button"
+      },
+      "evidence": "DOM observed"
+    },
+    "all": {
+      "locator": {
+        "role": "checkbox",
+        "name": "All",
+        "exact": true
+      },
+      "evidence": "DOM observed"
+    },
+    "note": "Filters inspected only; no acceptance/rejection actions."
+  },
+  "create": {
+    "landing": {
+      "row_names": [
+        "Component (including complete vehicles)",
+        "Semi- Components",
+        "Materials"
+      ],
+      "locator_recipe": "get_by_role('row').filter(has=page.get_by_role('cell', name=row_name, exact=True)).get_by_role('button', name='Create', exact=True)",
+      "mds": "All three entry buttons opened",
+      "module": "Landing and all three entry buttons observed; inner Module forms not opened"
+    },
+    "routes_observed": [
+      "#/createComponent/detail?mdsType=1&type=create",
+      "#/createComponent/detail?mdsType=2&type=create",
+      "#/createComponent/detail?mdsType=3&classification=1.1.1&type=create"
+    ],
+    "common": [
+      {
+        "locator": {
+          "role": "checkbox",
+          "name": "Sample",
+          "exact": true
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "CICES product identification",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"CICES product identification\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Remark",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Remark\")) textarea"
+        },
+        "evidence": "DOM observed",
+        "maxlength": 2000
+      },
+      {
+        "label": "File",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"File\")) input[type=\"file\"]"
+        },
+        "evidence": "DOM observed",
+        "interaction_verified": false
+      }
+    ],
+    "readback_labels": [
+      "Type",
+      "ID / Version",
+      "Supplier",
+      "Creation date",
+      "Check date",
+      "Release date"
+    ],
+    "component": [
+      {
+        "label": "Article Name",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Article Name\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Article Name(Foreign)",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Article Name(Foreign)\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Component Type",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Component Type\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Component No.",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Component No.\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Measured Mass per Item",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Measured Mass per Item\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Test Report No.",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Test Report No.\")) input"
+        },
+        "evidence": "DOM observed"
+      }
+    ],
+    "component_multisourced": {
+      "label": "Multi Sourced",
+      "locator": {
+        "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Multi Sourced\")) input[type=\"checkbox\"]"
+      },
+      "evidence": "DOM observed"
+    },
+    "component_calculated": [
+      "Calculated Mass per Item",
+      "Deviation"
+    ],
+    "component_type_button": {
+      "label": "Component Type",
+      "locator": {
+        "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Component Type\")) button"
+      },
+      "evidence": "DOM observed",
+      "interaction_verified": true
+    },
+    "component_mass_unit": {
+      "label": "Measured Mass per Item",
+      "locator": {
+        "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Measured Mass per Item\")) button.el-dropdown__caret-button"
+      },
+      "evidence": "DOM observed",
+      "options_in_dom": [
+        "mg",
+        "g",
+        "kg"
+      ],
+      "interaction_verified": false
+    },
+    "semicomponent": [
+      {
+        "label": "Article Name",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Article Name\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Article Name(Foreign)",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Article Name(Foreign)\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Semicomponent No.",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Semicomponent No.\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Specific weight",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Specific weight\")) input"
+        },
+        "evidence": "DOM observed"
+      }
+    ],
+    "semicomponent_weight_unit": {
+      "label": "Specific weight",
+      "locator": {
+        "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Specific weight\")) button.el-dropdown__caret-button"
+      },
+      "evidence": "DOM observed",
+      "options_in_dom": [
+        "-",
+        "kg/m",
+        "kg/m²",
+        "kg/m³"
+      ],
+      "note": "Specific weight input disabled while unit is '-'; change not tested."
+    },
+    "material": [
+      {
+        "label": "Material Name",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Material Name\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Name(Foreign)",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Name(Foreign)\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Material No.",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Material No.\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Trade name",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Trade name\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Material classification",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Material classification\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Material code/Symbol",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Material code/Symbol\")) input"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "label": "Test Report No.",
+        "locator": {
+          "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Test Report No.\")) input"
+        },
+        "evidence": "DOM observed"
+      }
+    ],
+    "material_classification": {
+      "label": "Material classification",
+      "locator": {
+        "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Material classification\")) button"
+      },
+      "evidence": "DOM observed",
+      "button_name": "select",
+      "readonly_input": true,
+      "interaction_verified": false
+    },
+    "material_norms": {
+      "label": "Norms/Standards",
+      "locator": {
+        "css": ".el-form-item:has(> .el-form-item__label:text-is(\"Norms/Standards\")) button"
+      },
+      "evidence": "DOM observed",
+      "interaction_verified": true
+    },
+    "text_limits": {
+      "names": 100,
+      "part_numbers": 50,
+      "cices": 200,
+      "trade_name": 50,
+      "material_symbol": 50,
+      "test_report_no": 50,
+      "remark": 2000,
+      "specific_weight": 20
+    },
+    "tree_icons": [
+      {
+        "locator": {
+          "css": "img[title=\"Open Tree\"]"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "locator": {
+          "css": "img[title=\"Close Tree\"]"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "locator": {
+          "css": "img[title=\"Filter\"]"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "locator": {
+          "css": "img[title=\"Add Component\"]"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "locator": {
+          "css": "img[title=\"Add SemiComponent\"]"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "locator": {
+          "css": "img[title=\"Add Metarial\"]"
+        },
+        "evidence": "DOM observed",
+        "note": "Site spelling is intentional"
+      },
+      {
+        "locator": {
+          "css": "img[title=\"Add MDS or Module\"]"
+        },
+        "evidence": "DOM observed"
+      },
+      {
+        "locator": {
+          "css": "img[title=\"Add Substance\"]"
+        },
+        "evidence": "DOM observed"
+      }
+    ],
+    "toolbar": [
+      {
+        "locator": {
+          "role": "button",
+          "name": "Tree Search",
+          "exact": true
+        },
+        "evidence": "DOM observed",
+        "interaction_verified": true
+      },
+      {
+        "locator": {
+          "role": "button",
+          "name": "Next",
+          "exact": true
+        },
+        "evidence": "DOM observed",
+        "interaction_verified": false,
+        "note": "Editor Next can request saving; do not confuse with classification wizard Next"
+      },
+      {
+        "locator": {
+          "role": "button",
+          "name": "Save",
+          "exact": true
+        },
+        "evidence": "DOM observed",
+        "interaction_verified": false,
+        "discovery_action": "skip"
+      },
+      {
+        "locator": {
+          "role": "button",
+          "name": "Attachment Upload",
+          "exact": true
+        },
+        "evidence": "DOM observed",
+        "interaction_verified": false,
+        "discovery_action": "skip"
+      }
+    ]
+  },
+  "dialogs": {
+    "material_classification": {
+      "name": "Creation of a new material",
+      "row_recipe": "get_by_role('row').filter(has=page.get_by_role('cell', name=classification, exact=True))",
+      "buttons": [
+        "Search",
+        "Next",
+        "Cancel",
+        "Close"
+      ],
+      "selected_for_inspection": "1.1.1",
+      "note": "Wizard Next opens unsaved Material form and allocates displayed ID. Other classifications/conditional fields unverified."
+    },
+    "component_type": {
+      "name": "Component Type",
+      "categories": [
+        "Powertrain",
+        "New Energy",
+        "Intelligent & Connected",
+        "Common Parts",
+        "Chassis Components",
+        "Electronics & Electrical",
+        "Body Assembly"
+      ],
+      "buttons": [
+        "Cancel",
+        "Confirm",
+        "Close"
+      ],
+      "note": "Opened and cancelled; category selections not committed."
+    },
+    "norms": {
+      "name": "The quoted standards",
+      "label": "Norm/Standard:",
+      "dropdown": {
+        "placeholder": "Select"
+      },
+      "number": "input without placeholder, initially disabled",
+      "buttons": [
+        "Cancel",
+        "Confirm",
+        "Close"
+      ],
+      "note": "Opened and cancelled; no standard added."
+    },
+    "reference_search": {
+      "name": "Detail",
+      "tabs": [
+        "Component",
+        "Semicomponent",
+        "Material",
+        "All MDSs"
+      ],
+      "note": "Same search labels, but date label is Date:(only for MDSs), checkbox is Created (own MDSs). Always scope to dialog."
+    },
+    "substance_search": {
+      "name": "Detail",
+      "tabs": [
+        "Basic Substance"
+      ],
+      "result_buttons": [
+        "Confirm",
+        "View",
+        "newSearch",
+        "Close"
+      ],
+      "note": "CAS query verified; Confirm (adds substance) was not clicked."
+    },
+    "tree_search": {
+      "name": "Tree Operations",
+      "tabs": [
+        "Search and Locate",
+        "Filter"
+      ],
+      "fields": [
+        "Article Name:",
+        "Part/Item No., Item- /Mat.-No., Material No.:",
+        "ID:",
+        "CAS:"
+      ],
+      "buttons": [
+        "Fuzzy Query",
+        "Accurate Query",
+        "Cancel",
+        "Close"
+      ],
+      "filter_labels": [
+        "Do not load any Basic Substance:",
+        "Do not load referenced MDSs/Modules:"
+      ],
+      "filter_button": "Filter",
+      "note": "Both tabs inspected. Queries/filter changes not applied."
+    },
+    "message": {
+      "name": "Message",
+      "buttons": [
+        "Cancel",
+        "Confirm",
+        "Close"
+      ],
+      "save_text": "You have not saved your data yet , do you really want to save it and then jump to the next page?",
+      "leave_text": "You have not saved your data yet,do you really want to proceed",
+      "note": "Exact message body determines action; never blanket-confirm. Only leave-without-saving confirmation used."
+    }
+  },
+  "excluded_actions": [
+    "Delete",
+    "Send",
+    "Submit",
+    "Propose",
+    "Publish",
+    "Release",
+    "Accept",
+    "Reject",
+    "Save",
+    "Attachment Upload",
+    "Confirm that saves or attaches nodes"
+  ],
+  "unverified": [
+    "Inner Module editor variants",
+    "Company-information fields: navigation requested Save",
+    "Send status information: skipped",
+    "Child-node quantity/percentage/range/rest/recyclate/application fields",
+    "Committed reference insertion",
+    "Read-back after Save",
+    "Other Material classifications and conditional fields",
+    "Supplier picker internals",
+    "Date-picker interaction",
+    "Search-result row locator for duplicated fixed columns"
+  ],
+  "evidence_notes": [
+    "No Save, Delete, Send or Submit clicked.",
+    "Three MDS forms opened; each displayed generated ID/version 0.01. Persistence before Save cannot be determined from UI alone.",
+    "All three forms exited without saving. IDs are intentionally omitted from this reusable catalog.",
+    "14 locators explicitly counted unique: 6 Component-search inputs, 5 Material-search inputs, 3 Material-create inputs. Other locators are DOM-grounded candidates, not all interaction-tested."
+  ]
+}

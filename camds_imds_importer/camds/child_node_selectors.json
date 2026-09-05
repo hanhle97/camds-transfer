@@ -1,0 +1,113 @@
+{
+  "observed_at": "2026-09-05",
+  "language": "English",
+  "scope": "Unsaved discovery trees; no Save/Delete/Send/Submit executed",
+  "tree": {
+    "node_name": ".node_name",
+    "selected": "a.curSelectedNode",
+    "note": "Node names may repeat. Scope to the intended parent subtree and verify selection; generated zTree IDs are not stable."
+  },
+  "add_component": {
+    "button": "img[title=\"Add Component\"]",
+    "alt": "添加零部件",
+    "behavior": "Immediately adds and selects a new child Component under selected parent; no modal",
+    "quantity": ".el-form-item:has(> .el-form-item__label:text-is(\"Quantity\")) input",
+    "initial_quantity": "1",
+    "mass": ".el-form-item:has(> .el-form-item__label:text-is(\"Measured Mass per Item\")) input",
+    "scope": "Details tabpanel",
+    "evidence": "Child actually added; Quantity observed, not edited"
+  },
+  "add_material": {
+    "button": "img[title=\"Add Metarial\"]",
+    "behavior": "Opens reference search, NOT new Material creation",
+    "dialog": "Detail",
+    "tab": "Material",
+    "search_name": ".el-form-item:has(> .el-form-item__label:text-is(\"Material Name:\")) input",
+    "search_id": ".el-form-item:has(> .el-form-item__label:text-is(\"ID:\")) input",
+    "search_button": {
+      "role": "button",
+      "name": "Search",
+      "exact": true
+    },
+    "selection": "Exact ID/version cell inside a row of dialog Detail",
+    "confirm": {
+      "role": "button",
+      "name": "Confirm",
+      "exact": true,
+      "scope": "dialog Detail"
+    },
+    "preview": "Preview",
+    "child_mass": ".el-form-item:has(> .el-form-item__label:text-is(\"Mass\")) input",
+    "note": "Verified reference under Component. Material identity/composition fields disabled; Mass editable, default 0 g. Application tab and recyclate edit present. No Add Substance icon on this referenced Material.",
+    "evidence": "Published material selected and attached in unsaved tree"
+  },
+  "add_substance": {
+    "button": "img[title=\"Add Substance\"]",
+    "parent": "Editable own Material, not referenced published Material",
+    "dialog": "Detail",
+    "tab": "Basic Substance",
+    "cas": ".el-form-item:has(> .el-form-item__label:text-is(\"CAS No.:\")) input",
+    "selection": "Exact CAS cell inside row of dialog Detail",
+    "confirm": {
+      "role": "button",
+      "name": "Confirm",
+      "exact": true,
+      "scope": "dialog Detail"
+    },
+    "evidence": "Nickel CAS 7440-02-0 attached to own unsaved Material; form Type Basic Substance verified"
+  },
+  "proportion": {
+    "container": ".el-form-item:has(> .el-form-item__label:text-is(\"Proportion\"))",
+    "range": {
+      "radio": ".el-form-item:has(> .el-form-item__label:text-is(\"Proportion\")) label[role=\"radio\"]:has(input[type=\"radio\"][value=\"1\"])",
+      "inputs": ".el-form-item:has(> .el-form-item__label:text-is(\"Proportion\")) label[role=\"radio\"]:has(input[type=\"radio\"][value=\"1\"]) input[type=\"text\"]",
+      "from_index": 0,
+      "to_index": 1,
+      "verified_input_count": 2,
+      "values_tested": [
+        "5",
+        "10"
+      ]
+    },
+    "fixed": {
+      "radio": ".el-form-item:has(> .el-form-item__label:text-is(\"Proportion\")) label[role=\"radio\"]:has(input[type=\"radio\"][value=\"2\"])",
+      "input": ".el-form-item:has(> .el-form-item__label:text-is(\"Proportion\")) label[role=\"radio\"]:has(input[type=\"radio\"][value=\"2\"]) input[type=\"text\"]",
+      "verified_input_count": 1,
+      "value_tested": "10"
+    },
+    "rest": {
+      "radio": ".el-form-item:has(> .el-form-item__label:text-is(\"Proportion\")) label[role=\"radio\"]:has(input[type=\"radio\"][value=\"3\"])",
+      "input": null
+    },
+    "notes": [
+      "Select radio wrapper (native radio is aria-hidden).",
+      "Mode changes reset previous numeric fields to 0.",
+      "Radio accessible names include current numbers: avoid exact full names.",
+      "Fixed and range inputs accept values and read back; server validation and calculation after blur/save NOT tested.",
+      "Rest selected successfully, displayed 0%; calculation/persistence not validated."
+    ]
+  },
+  "save": {
+    "locator": {
+      "scope": ".handle",
+      "role": "button",
+      "name": "Save",
+      "exact": true
+    },
+    "verified_count": 1,
+    "position": "Shared editor action bar outside Details tabpanel",
+    "observed_for": [
+      "root Component",
+      "child Component",
+      "referenced Material",
+      "Basic Substance"
+    ],
+    "clicked": false,
+    "semantics": "No separate per-node Save identified. Whether shared Save persists selected node or whole tree is UNVERIFIED; cannot claim per-node persistence from DOM.",
+    "remaining_verification": [
+      "Save a valid authorized draft",
+      "Reload draft and read back hierarchy, Quantity, Mass and Proportion",
+      "Check validation errors, ID/version and any Save dialog"
+    ]
+  }
+}

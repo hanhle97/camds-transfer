@@ -1,8 +1,4 @@
-"""Search and prepare a single, unsaved MDS root using observed CAMDS controls.
-
-No generic click/confirm API is exposed. Child insertion and persistence are not
-implemented; preparing a root is deliberately reported separately from import.
-"""
+"""Observed Search/root controls; verified tree transfer lives in tree_import.py."""
 from __future__ import annotations
 
 import json
@@ -82,7 +78,7 @@ class CamdsOperations:
         self.results_ready = False
 
     async def _navigate(self, url: str) -> None:
-        if self.editor_open or "#/createComponent/" in self.page.url:
+        if self.editor_open or ("#/createComponent/" in self.page.url and "type=view" not in self.page.url):
             raise RuntimeError("An MDS editor is open. Review it in the browser, then close this session before starting another operation.")
         if self.page.url == url:
             await self.page.reload(wait_until="domcontentloaded", timeout=60_000)
@@ -120,8 +116,11 @@ class CamdsOperations:
             }.items():
                 await self.page.get_by_role("checkbox", name=label, exact=True).set_checked(enabled)
         await self.page.get_by_role("button", name="Search", exact=True).click()
-        await self.page.get_by_role("button", name="newSearch", exact=True).wait_for(timeout=60_000)
+        no_results = self.page.get_by_text("No suitable data!", exact=True)
+        await self.page.get_by_role("button", name="newSearch", exact=True).or_(no_results).first.wait_for(timeout=60_000)
         await expect(self.page.locator(".el-loading-mask:visible")).to_have_count(0, timeout=60_000)
+        if await no_results.is_visible():
+            return {"kind": "search", "columns": [], "rows": [], "note": "No suitable data found for these criteria."}
         self.results_ready = True
         return await self.read_results()
 
@@ -182,6 +181,16 @@ class CamdsOperations:
         button = self.page.get_by_role("button", name="Save", exact=True)
         await expect(button).to_be_visible(timeout=15_000)
         await button.click()
-        await asyncio.sleep(1)
-        self.editor_open = False
-        return {"kind": "save", "identity": "", "note": "MDS node saved in CAMDS. Review the browser confirmation."}
+        # Wait for rendering and the loading mask, rather than declaring success
+        # after an arbitrary one-second sleep. Final persistence requires Search/View.
+        for _ in range(2):
+            await asyncio.sleep(0.35)
+            await expect(self.page.locator('.el-loading-mask:visible')).to_have_count(0, timeout=60_000)
+        errors = self.page.locator('.el-form-item__error:visible, .el-message--error:visible')
+        if await errors.count():
+            raise RuntimeError("CAMDS Save validation: " + " | ".join(await errors.all_text_contents()))
+        if await self.page.get_by_role("dialog").count():
+            raise RuntimeError("CAMDS Save opened a dialog; inspect it in the browser")
+        await expect(self.page.get_by_role("button", name="Check", exact=True)).to_be_visible(timeout=30_000)
+        return {"kind": "save", "identity": "", "editor_open": True,
+                "note": "Save returned without visible validation errors. Editor retained; persistence is verified by Search/View during full tree import."}

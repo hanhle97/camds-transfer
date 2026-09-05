@@ -97,7 +97,7 @@ class MainWindow(QMainWindow):
         self.resume_button = QPushButton("Resume")
         self.stop_button = QPushButton("Stop")
         self.mode = QComboBox()
-        self.mode.addItems(("PARSE_ONLY", "DRY_RUN", "CREATE_ROOT"))
+        self.mode.addItems(("PARSE_ONLY", "DRY_RUN", "CREATE_ROOT", "IMPORT_TREE"))
         self.mode.setCurrentText("DRY_RUN")
         buttons.addWidget(QLabel("Mode:"))
         buttons.addWidget(self.mode)
@@ -128,6 +128,10 @@ class MainWindow(QMainWindow):
         self.overview_tab.set_mode(self.mode.currentText())
 
     def _import_not_available(self) -> None:
+        if self.mode.currentText() == "IMPORT_TREE":
+            self.tabs.setCurrentWidget(self.camds_tab)
+            self.camds_tab.review_import()
+            return
         if self.mode.currentText() == "CREATE_ROOT":
             self.tabs.setCurrentWidget(self.camds_tab)
             if self.document:

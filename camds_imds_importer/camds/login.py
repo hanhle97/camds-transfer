@@ -8,6 +8,7 @@ from typing import Callable
 
 from playwright.async_api import Locator, Page
 
+from ..core.exceptions import CamdsNavigationError
 from .selectors import AUTHENTICATED, LOGIN_BUTTON, LOGIN_PASSWORD, LOGIN_USERNAME, VERIFICATION, VERIFICATION_INPUT, VERIFICATION_SUBMIT, SelectorStrategy
 
 
@@ -47,6 +48,16 @@ async def _first_visible(page: Page, strategy: SelectorStrategy) -> Locator | No
 
 async def open_login_page(page: Page, login_url: str) -> None:
     await page.goto(login_url, wait_until="domcontentloaded", timeout=60_000)
+    try:
+        await page.wait_for_function(
+            "() => { const app = document.querySelector('#app'); return app && app.children.length > 0; }",
+            timeout=60_000,
+        )
+    except Exception as exc:
+        raise CamdsNavigationError(
+            "CATARC page loaded but the login application did not render. "
+            "Check network access, browser console errors, or site availability."
+        ) from exc
 
 
 async def verification_required(page: Page) -> bool:

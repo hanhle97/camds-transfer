@@ -50,6 +50,7 @@ class SettingsDialog(QDialog):
     def _test_login(self) -> None:
         entered = self._entered()
         if entered:
+            self.hide()
             self.test_login_requested.emit(entered)
 
     def _save(self) -> None:

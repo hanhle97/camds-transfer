@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import asyncio
+import re
 from pathlib import Path
 from typing import Callable
 
@@ -46,7 +48,7 @@ class CamdsBrowser:
             finally:
                 await browser.close()
 
-    async def discover_authenticated(self, target: Path, base_url: str) -> dict:
+    async def discover_authenticated(self, target: Path, base_url: str, duration_seconds: int = 120) -> dict:
         """Open a persisted authenticated session and capture only read-only page metadata."""
         if not self.config.storage_state_path.is_file():
             raise FileNotFoundError("No authenticated storage state found; complete Test Login first")
@@ -56,6 +58,15 @@ class CamdsBrowser:
             page = await context.new_page()
             try:
                 await page.goto(base_url, wait_until="domcontentloaded", timeout=60_000)
-                return await capture_controls(page, target)
+                initial = await capture_controls(page, target / "home")
+                last_url = page.url
+                deadline = asyncio.get_running_loop().time() + duration_seconds
+                while asyncio.get_running_loop().time() < deadline:
+                    if page.url != last_url:
+                        last_url = page.url
+                        route = re.sub(r"[^A-Za-z0-9_.-]+", "_", page.url.split("#")[-1] or "home")[:80]
+                        await capture_controls(page, target / route)
+                    await asyncio.sleep(1)
+                return initial
             finally:
                 await browser.close()

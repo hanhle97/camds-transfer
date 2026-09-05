@@ -39,7 +39,7 @@ Credential lookup order is environment variables, Windows Credential Manager thr
 
 The dependency direction remains PDF -> canonical JSON -> validation -> CAMDS mapping -> browser automation. CAMDS modules never read PDFs.
 
-After a successful Test Login, use `CAMDS -> Discover Authenticated Page` to capture a read-only snapshot under `debug/authenticated-home/`. The snapshot records the current URL, title, DOM, visible controls, and screenshot so selectors can be reviewed before any data-entry implementation.
+After a successful Test Login, use `CAMDS -> Discover Authenticated Page` to open a read-only discovery session for two minutes. Navigate through CAMDS screens manually in the headed browser; a snapshot is captured whenever the URL/route changes under `debug/authenticated-home/<route>/`. Each snapshot records the URL, title, DOM, visible controls, and screenshot so selectors can be reviewed before any data-entry implementation.
 
 The action policy explicitly classifies `DELETE`, `SEND`, `PROPOSE`, and `SUBMIT` as sensitive. These actions raise an exception unless an explicit confirmation is supplied by the interactive UI. No destructive or submission operation is currently wired to a browser button.
 

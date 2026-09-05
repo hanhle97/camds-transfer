@@ -90,7 +90,6 @@ class MainWindow(QMainWindow):
         buttons = QHBoxLayout()
         self.parse_button = QPushButton("Parse")
         self.validate_button = QPushButton("Validate")
-        self.login_button = QPushButton("Login CAMDS")
         self.start_button = QPushButton("Start Import")
         self.pause_button = QPushButton("Pause")
         self.resume_button = QPushButton("Resume")
@@ -100,7 +99,7 @@ class MainWindow(QMainWindow):
         self.mode.setCurrentText("SAVE_DRAFT")
         buttons.addWidget(QLabel("Mode:"))
         buttons.addWidget(self.mode)
-        for button in (self.parse_button, self.validate_button, self.login_button, self.start_button, self.pause_button, self.resume_button, self.stop_button):
+        for button in (self.parse_button, self.validate_button, self.start_button, self.pause_button, self.resume_button, self.stop_button):
             buttons.addWidget(button)
         grid.addLayout(buttons, 5, 0, 1, 4)
         root.addWidget(summary)
@@ -118,7 +117,6 @@ class MainWindow(QMainWindow):
         self.import_button.clicked.connect(self.select_pdf)
         self.parse_button.clicked.connect(self.start_parse)
         self.validate_button.clicked.connect(self.start_validation)
-        self.login_button.clicked.connect(self.open_settings)
         self.start_button.clicked.connect(self._import_not_available)
         self.mode.currentTextChanged.connect(self.overview_tab.set_mode)
         self.overview_tab.set_mode(self.mode.currentText())
@@ -147,7 +145,7 @@ class MainWindow(QMainWindow):
         settings_menu.addAction(account_action)
         camds_menu = self.menuBar().addMenu("CAMDS")
         login_action = QAction("Login CAMDS", self)
-        login_action.triggered.connect(self.login_button.click)
+        login_action.triggered.connect(self.login_from_menu)
         camds_menu.addAction(login_action)
         discover_action = QAction("Discover Authenticated Page", self)
         discover_action.triggered.connect(self.start_discovery)
@@ -238,6 +236,13 @@ class MainWindow(QMainWindow):
         dialog = SettingsDialog(self.credentials, self)
         dialog.test_login_requested.connect(self.start_test_login)
         dialog.exec()
+
+    def login_from_menu(self) -> None:
+        credentials = self.credentials.get_credentials()
+        if credentials:
+            self.start_test_login(credentials)
+        else:
+            self.open_settings()
 
     def start_test_login(self, credentials: Credentials | None = None) -> None:
         resolved = credentials or self.credentials.get_credentials()
@@ -364,7 +369,6 @@ class MainWindow(QMainWindow):
         state = AppState(state_value)
         self.parse_button.setEnabled(state == AppState.DOCUMENT_LOADED)
         self.validate_button.setEnabled(state == AppState.PARSED)
-        self.login_button.setEnabled(state not in {AppState.PARSING, AppState.VALIDATING, AppState.IMPORTING})
         ready_data = self.document is not None and state in {AppState.READY, AppState.CAMDS_AUTHENTICATED}
         parse_only = self.mode.currentText() == "PARSE_ONLY"
         self.start_button.setEnabled(ready_data and (parse_only or self.authenticated))

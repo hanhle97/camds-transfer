@@ -15,6 +15,7 @@ from ..workers.operations_worker import OperationsWorker
 
 class CamdsTab(QWidget):
     log_message = Signal(str)
+    operation_status = Signal(str, bool)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -146,6 +147,7 @@ class CamdsTab(QWidget):
         self.busy = True
         self.status.setText(message + " Keep the CAMDS browser open…")
         self.log_message.emit(message)
+        self.operation_status.emit(message, False)
         self._update()
 
     def _submit(self, action, request) -> None:
@@ -184,6 +186,7 @@ class CamdsTab(QWidget):
             self.results.resizeColumnsToContents()
         self.status.setText(result.get("identity", "") + " " + result["note"])
         self.log_message.emit(result["note"])
+        self.operation_status.emit(result["note"], True)
         self._update()
 
     def _failed(self, message, editor_open) -> None:

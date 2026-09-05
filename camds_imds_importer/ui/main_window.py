@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 import pymupdf
-from PySide6.QtCore import QThread, Qt
+from PySide6.QtCore import QThread, Qt, QObject, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QMainWindow,
@@ -29,6 +29,7 @@ from .progress_tab import ProgressTab
 from .settings_dialog import SettingsDialog
 from .tree_tab import TreeTab
 from .validation_tab import ValidationTab
+from .camds_tab import CamdsTab
 from ..camds.dry_run import write_dry_run_plan
 from ..core.exporter import export_excel, export_pdf
 
@@ -96,8 +97,8 @@ class MainWindow(QMainWindow):
         self.resume_button = QPushButton("Resume")
         self.stop_button = QPushButton("Stop")
         self.mode = QComboBox()
-        self.mode.addItems(("PARSE_ONLY", "DRY_RUN", "SAVE_DRAFT", "SUBMIT"))
-        self.mode.setCurrentText("SAVE_DRAFT")
+        self.mode.addItems(("PARSE_ONLY", "DRY_RUN", "CREATE_ROOT"))
+        self.mode.setCurrentText("DRY_RUN")
         buttons.addWidget(QLabel("Mode:"))
         buttons.addWidget(self.mode)
         for button in (self.parse_button, self.validate_button, self.start_button, self.pause_button, self.resume_button, self.stop_button):
@@ -111,7 +112,10 @@ class MainWindow(QMainWindow):
         self.mapping_tab = MappingTab()
         self.progress_tab = ProgressTab()
         self.logs_tab = LogsTab()
-        for title, widget in (("Overview", self.overview_tab), ("MDS Tree", self.tree_tab), ("Validation", self.validation_tab), ("CAMDS Mapping", self.mapping_tab), ("Progress", self.progress_tab), ("Logs", self.logs_tab)):
+        self.camds_tab = CamdsTab()
+        self.camds_tab.log_message.connect(lambda message: self.logs_tab.append("CAMDS", message))
+        self.camds_tab.operation_status.connect(self._camds_operation_status)
+        for title, widget in (("Overview", self.overview_tab), ("MDS Tree", self.tree_tab), ("Validation", self.validation_tab), ("CAMDS Mapping", self.mapping_tab), ("CAMDS Search / Create", self.camds_tab), ("Progress", self.progress_tab), ("Logs", self.logs_tab)):
             self.tabs.addTab(widget, title)
         root.addWidget(self.tabs)
         self.setCentralWidget(central)
@@ -120,9 +124,16 @@ class MainWindow(QMainWindow):
         self.validate_button.clicked.connect(self.start_validation)
         self.start_button.clicked.connect(self._import_not_available)
         self.mode.currentTextChanged.connect(self.overview_tab.set_mode)
+        self.mode.currentTextChanged.connect(lambda _: self._apply_state(self.state_machine.state.value))
         self.overview_tab.set_mode(self.mode.currentText())
 
     def _import_not_available(self) -> None:
+        if self.mode.currentText() == "CREATE_ROOT":
+            self.tabs.setCurrentWidget(self.camds_tab)
+            if self.document:
+                self.camds_tab.set_document(self.document)
+                self.camds_tab.load_node()
+            return
         if self.mode.currentText() == "DRY_RUN" and self.document and self.source_path:
             output = Path("output") / self.source_path.stem / "dry_run_plan.json"
             plan = write_dry_run_plan(self.document.to_dict(), output)
@@ -132,8 +143,15 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self,
             "CAMDS Import",
-            "CAMDS data creation is intentionally disabled in this iteration. Test Login is available; dry-run import is the next implementation step.",
+            "Parsed data is available in the MDS Tree. Use DRY_RUN for a local plan, or CAMDS Search / Create to search and prepare one unsaved root.",
         )
+
+    def _camds_operation_status(self, message: str, complete: bool) -> None:
+        self.stage_label.setText("Current stage: CAMDS operation complete" if complete else "Current stage: " + message)
+        self.node_label.setText(message)
+        if complete:
+            self.overall.setValue(100)
+            self.status_label.setText("● Status: Ready")
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("File")
@@ -147,6 +165,9 @@ class MainWindow(QMainWindow):
         pdf_action.triggered.connect(self.export_pdf_data)
         file_menu.addAction(pdf_action)
         camds_menu = self.menuBar().addMenu("CAMDS")
+        operations_action = QAction("Search / Create", self)
+        operations_action.triggered.connect(lambda: self.tabs.setCurrentWidget(self.camds_tab))
+        camds_menu.addAction(operations_action)
         login_action = QAction("Login CAMDS", self)
         login_action.triggered.connect(self.login_from_menu)
         camds_menu.addAction(login_action)
@@ -196,6 +217,7 @@ class MainWindow(QMainWindow):
 
     def _parse_completed(self, document: MDSDocument, statistics: object) -> None:
         self.document, self.statistics = document, statistics
+        self.camds_tab.set_document(document)
         self.state_machine.transition(AppState.PARSED)
         self.tree_tab.set_root(document.root)
         self.overview_tab.set_document(document, statistics)
@@ -390,9 +412,18 @@ class MainWindow(QMainWindow):
         self.parse_button.setEnabled(state == AppState.DOCUMENT_LOADED)
         self.validate_button.setEnabled(state == AppState.PARSED)
         ready_data = self.document is not None and state in {AppState.READY, AppState.CAMDS_AUTHENTICATED}
-        parse_only = self.mode.currentText() == "PARSE_ONLY"
-        self.start_button.setEnabled(ready_data and (parse_only or self.authenticated))
+        self.start_button.setEnabled(ready_data)
+        self.start_button.setText("Review Create Root" if self.mode.currentText() == "CREATE_ROOT" else "Start Import")
         self.pause_button.setEnabled(state == AppState.IMPORTING)
         self.resume_button.setEnabled(state == AppState.PAUSED)
         self.stop_button.setEnabled(state in {AppState.IMPORTING, AppState.PAUSED})
         self.status_label.setText(f"● Status: {state.value.replace('_', ' ').title()}")
+
+    def closeEvent(self, event) -> None:
+        # Cancel Playwright on its own event loop before its QThread is destroyed.
+        if self.camds_tab.worker is not None:
+            self.camds_tab.stop_session()
+            event.ignore()
+            QTimer.singleShot(150, self.close)
+            return
+        super().closeEvent(event)

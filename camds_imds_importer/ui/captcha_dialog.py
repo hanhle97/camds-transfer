@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QLineEdit, QVBo
 
 class CaptchaDialog(QDialog):
     code_submitted = Signal(str)
+    verification_completed = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -22,6 +23,7 @@ class CaptchaDialog(QDialog):
         self.code.setPlaceholderText("Enter CAPTCHA code (if required)")
         layout.addWidget(self.code)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("I completed verification")
         buttons.accepted.connect(self._submit)
         buttons.rejected.connect(self.close)
         layout.addWidget(buttons)
@@ -37,3 +39,5 @@ class CaptchaDialog(QDialog):
     def _submit(self) -> None:
         self.code_submitted.emit(self.code.text())
         self.code.clear()
+        self.verification_completed.emit()
+        self.hide()

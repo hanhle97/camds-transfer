@@ -78,6 +78,14 @@ async def is_authenticated(page: Page) -> bool:
         authenticated_terms = ("logout", "log out", "退出", "首页", "home", "mds")
         if any(term in body for term in authenticated_terms):
             return True
+        # Some CATARC deployments retain #/login after successful CAPTCHA,
+        # while replacing the form with an authenticated SPA shell.
+        app = page.locator("#app")
+        if await app.count():
+            shell_text = (await app.inner_text()).strip()
+            shell_children = await app.locator(":scope > *").count()
+            if shell_text and shell_children:
+                return True
     return "#/login" not in page.url and not login_form_present
 
 

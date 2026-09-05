@@ -284,12 +284,14 @@ class MainWindow(QMainWindow):
             if self.captcha_dialog is None:
                 self.captcha_dialog = CaptchaDialog(self)
                 self.captcha_dialog.code_submitted.connect(self._submit_verification_code)
+                self.captcha_dialog.verification_completed.connect(self._verification_completed)
             self.captcha_dialog.show()
 
     def _show_verification(self, image: bytes) -> None:
         if self.captcha_dialog is None:
             self.captcha_dialog = CaptchaDialog(self)
             self.captcha_dialog.code_submitted.connect(self._submit_verification_code)
+            self.captcha_dialog.verification_completed.connect(self._verification_completed)
         self.captcha_dialog.set_image(image)
         self.captcha_dialog.show()
         self.captcha_dialog.raise_()
@@ -297,6 +299,9 @@ class MainWindow(QMainWindow):
     def _submit_verification_code(self, code: str) -> None:
         if self._active_login_worker and code.strip():
             self._active_login_worker.set_verification_code(code)
+
+    def _verification_completed(self) -> None:
+        self.logs_tab.append("WAIT", "Verification marked complete; checking CAMDS session")
 
     def _login_completed(self, result: object, username: str) -> None:
         if self.captcha_dialog:

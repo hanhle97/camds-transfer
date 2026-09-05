@@ -207,6 +207,8 @@ class CamdsTab(QWidget):
         self.status.setText(message + suffix)
         self.log_message.emit(message + suffix)
         self._update()
+        if editor_open:
+            self.forms.setEnabled(False)
 
     def _finished(self) -> None:
         worker, self.worker = self.worker, None

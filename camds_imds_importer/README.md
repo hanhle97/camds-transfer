@@ -39,6 +39,10 @@ Credential lookup order is environment variables, Windows Credential Manager thr
 
 The dependency direction remains PDF -> canonical JSON -> validation -> CAMDS mapping -> browser automation. CAMDS modules never read PDFs.
 
+After a successful Test Login, use `CAMDS -> Discover Authenticated Page` to capture a read-only snapshot under `debug/authenticated-home/`. The snapshot records the current URL, title, DOM, visible controls, and screenshot so selectors can be reviewed before any data-entry implementation.
+
+The action policy explicitly classifies `DELETE`, `SEND`, `PROPOSE`, and `SUBMIT` as sensitive. These actions raise an exception unless an explicit confirmation is supplied by the interactive UI. No destructive or submission operation is currently wired to a browser button.
+
 ## Parser assumptions
 
 - The report is the standard IMDS landscape table with native text and stable semantic columns.

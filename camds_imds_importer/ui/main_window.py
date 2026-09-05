@@ -19,6 +19,7 @@ from ..core.progress import ImportProgress
 from ..core.state_machine import AppState, ApplicationStateMachine
 from ..parser.models import MDSDocument
 from ..workers.camds_worker import CamdsLoginWorker
+from ..workers.discovery_worker import DiscoveryWorker
 from ..workers.parser_worker import ParserWorker
 from ..workers.validation_worker import ValidationWorker
 from .logs_tab import LogsTab
@@ -150,6 +151,9 @@ class MainWindow(QMainWindow):
         login_action = QAction("Test Login", self)
         login_action.triggered.connect(self.open_settings)
         camds_menu.addAction(login_action)
+        discover_action = QAction("Discover Authenticated Page", self)
+        discover_action.triggered.connect(self.start_discovery)
+        camds_menu.addAction(discover_action)
         self.menuBar().addMenu("Help")
 
     def select_pdf(self) -> None:
@@ -256,6 +260,18 @@ class MainWindow(QMainWindow):
         worker.error.connect(self._worker_error)
         worker.verification_screenshot.connect(self._show_verification)
         worker.completed.connect(lambda result: self._login_completed(result, resolved.username))
+        thread.start()
+
+    def start_discovery(self) -> None:
+        storage = Path(".runtime/camds_storage_state.json")
+        worker = DiscoveryWorker(
+            CamdsBrowser(BrowserConfig(login_url="https://catarc.camds.org.cn/#/login", storage_state_path=storage, headless=False)),
+            Path("debug") / "authenticated-home",
+            "https://catarc.camds.org.cn/",
+        )
+        thread = self._run_worker(worker)
+        worker.completed.connect(lambda result: self.logs_tab.append("CAMDS", f"Discovery snapshot saved: {result.get('url', '-') }"))
+        worker.error.connect(self._worker_error)
         thread.start()
 
     def _login_stage(self, stage: str) -> None:

@@ -5,6 +5,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from .action_policy import CamdsAction
+
 
 @dataclass(frozen=True, slots=True)
 class PlannedOperation:
@@ -14,6 +16,7 @@ class PlannedOperation:
     name: str
     action: str
     fields: dict[str, Any]
+    safety: str = "READ_ONLY"
 
 
 def build_dry_run_plan(root: dict[str, Any]) -> list[PlannedOperation]:
@@ -23,7 +26,7 @@ def build_dry_run_plan(root: dict[str, Any]) -> list[PlannedOperation]:
         node_type = node.get("node_type", "UNKNOWN")
         action = "SEARCH_SUBSTANCE_BY_CAS" if node_type == "SUBSTANCE" and node.get("cas_number") not in (None, "system") else f"INSPECT_{node_type}"
         fields = {key: node.get(key) for key in ("part_number", "material_number", "cas_number", "quantity", "weight_g", "percentage", "percentage_min", "percentage_max", "classification") if node.get(key) is not None}
-        operations.append(PlannedOperation(len(operations) + 1, node["uid"], node_type, node.get("name", ""), action, fields))
+        operations.append(PlannedOperation(len(operations) + 1, node["uid"], node_type, node.get("name", ""), action, fields, CamdsAction.READ.value))
         for child in node.get("children", []):
             visit(child)
 

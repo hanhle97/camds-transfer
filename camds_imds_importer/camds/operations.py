@@ -174,7 +174,7 @@ class CamdsOperations:
         await remark.fill(request.remark)
         await expect(remark).to_have_value(request.remark)
         return {"kind": "create", "identity": (await identity.inner_text()).strip(),
-                "note": "Root form filled and read back in the browser. Review it, then use Save in the app to persist."}
+                "note": "Root form filled and read back in the browser. NOT saved yet; review it, then use Save in the app to persist."}
 
     async def save(self, request=None) -> dict:
         if not self.editor_open:

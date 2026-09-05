@@ -131,6 +131,8 @@ class CamdsTab(QWidget):
         self.busy = True
         self.status.setText("Opening CAMDS browser…")
         self._update()
+        if editor_open:
+            self.forms.setEnabled(False)
         self.worker.start()
 
     def stop_session(self) -> None:

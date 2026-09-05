@@ -146,8 +146,8 @@ class MainWindow(QMainWindow):
         account_action.triggered.connect(self.open_settings)
         settings_menu.addAction(account_action)
         camds_menu = self.menuBar().addMenu("CAMDS")
-        login_action = QAction("Test Login", self)
-        login_action.triggered.connect(self.open_settings)
+        login_action = QAction("Login CAMDS", self)
+        login_action.triggered.connect(self.login_button.click)
         camds_menu.addAction(login_action)
         discover_action = QAction("Discover Authenticated Page", self)
         discover_action.triggered.connect(self.start_discovery)
@@ -281,6 +281,7 @@ class MainWindow(QMainWindow):
 
     def _login_completed(self, result: object, username: str) -> None:
         if result.status == LoginStatus.AUTHENTICATED:
+            self._set_stage("CAMDS_AUTHENTICATED")
             self.authenticated = True
             self.connection_label.setText("✓ CAMDS: Logged in")
             self.overview_tab.set_connection("Authenticated", username)
@@ -291,6 +292,7 @@ class MainWindow(QMainWindow):
                 self.state_machine.transition(AppState.CAMDS_AUTHENTICATED)
             self.logs_tab.append("CAMDS", f"CAMDS login successful; authenticated URL: {result.url}")
         else:
+            self._set_stage("CAMDS_LOGIN_REQUIRED")
             self.connection_label.setText("⚠ CAMDS: Not connected")
             self.logs_tab.append("ERROR", result.message)
 

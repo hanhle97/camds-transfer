@@ -48,5 +48,9 @@ async def test_authenticated_detection_uses_url_and_navigation() -> None:
     assert await is_authenticated(FakePage("http://example/#/home", visible_selectors={"navigation"}))
 
 
+async def test_authenticated_spa_shell_can_keep_login_hash() -> None:
+    assert await is_authenticated(FakePage("http://example/#/login", visible_selectors={"navigation"}))
+
+
 async def test_login_page_is_not_authenticated() -> None:
     assert not await is_authenticated(FakePage("http://example/#/login"))

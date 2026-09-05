@@ -68,9 +68,16 @@ async def verification_required(page: Page) -> bool:
 
 
 async def is_authenticated(page: Page) -> bool:
-    if "#/login" not in page.url and await _first_visible(page, AUTHENTICATED):
+    # CATARC is a SPA and may keep the hash at /login briefly after the
+    # authenticated shell is mounted. DOM signals are therefore authoritative.
+    if await _first_visible(page, AUTHENTICATED):
         return True
     login_form_present = bool(await _first_visible(page, LOGIN_PASSWORD))
+    if not login_form_present:
+        body = (await page.locator("body").inner_text()).lower()
+        authenticated_terms = ("logout", "log out", "退出", "首页", "home", "mds")
+        if any(term in body for term in authenticated_terms):
+            return True
     return "#/login" not in page.url and not login_form_present
 
 
@@ -118,6 +125,10 @@ async def login(
             pass
 
     if not await is_authenticated(page):
+        debug_dir = storage_state_path.parent / "login-debug"
+        debug_dir.mkdir(parents=True, exist_ok=True)
+        await page.screenshot(path=debug_dir / "login-state.png", full_page=True)
+        (debug_dir / "login-state.html").write_text(await page.content(), encoding="utf-8")
         return LoginResult(LoginStatus.FAILED, page.url, "Authenticated CAMDS state was not detected")
     storage_state_path.parent.mkdir(parents=True, exist_ok=True)
     await page.context.storage_state(path=storage_state_path)

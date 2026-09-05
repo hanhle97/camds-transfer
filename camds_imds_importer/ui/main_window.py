@@ -158,11 +158,16 @@ class MainWindow(QMainWindow):
         if not self.source_path:
             return
         self.state_machine.transition(AppState.PARSING)
+        self._set_overall_busy()
+        self._set_stage("PDF_LOADING")
+        self.node_label.setText("Current node: Reading PDF pages…")
+        self.logs_tab.append("PARSER", "PDF parsing started; reading pages in background")
         worker = ParserWorker(self.source_path)
         thread = self._run_worker(worker)
         thread.started.connect(worker.run)
         worker.progress_changed.connect(self._set_overall)
         worker.operation_progress_changed.connect(self.progress_tab.set_operation)
+        worker.operation_progress_changed.connect(lambda current, total: self.node_label.setText(f"Current node: Reading PDF page {current} / {total}"))
         worker.stage_changed.connect(self._set_stage)
         worker.log_message.connect(lambda message: self.logs_tab.append("PARSER", message))
         worker.error.connect(self._worker_error)
@@ -239,6 +244,8 @@ class MainWindow(QMainWindow):
         thread.start()
 
     def _login_stage(self, stage: str) -> None:
+        if self.state_machine.state == AppState.PARSING:
+            return
         self._set_stage(stage)
         if stage == "CAMDS_WAITING_VERIFICATION":
             self.connection_label.setText("◉ CAMDS: Waiting verification")
@@ -290,6 +297,10 @@ class MainWindow(QMainWindow):
     def _set_overall(self, value: int) -> None:
         self.overall.setValue(value)
         self.progress_tab.set_overall(value)
+
+    def _set_overall_busy(self) -> None:
+        self.overall.setRange(0, 0)
+        self.progress_tab.begin_busy()
 
     def _set_stage(self, stage: str) -> None:
         readable = stage.replace("_", " ").title()

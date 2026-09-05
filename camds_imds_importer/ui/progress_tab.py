@@ -25,11 +25,18 @@ class ProgressTab(QWidget):
         layout.addStretch()
 
     def set_overall(self, percent: int) -> None:
+        if self.overall.maximum() == 0:
+            self.overall.setRange(0, 100)
         self.overall.setValue(percent)
+
+    def begin_busy(self) -> None:
+        self.overall.setRange(0, 0)
+        self.labels["Stage"].setText("Loading PDF…")
 
     def set_operation(self, current: int, total: int) -> None:
         self.current.setMaximum(max(total, 1))
         self.current.setValue(current)
+        self.labels["Completed"].setText(f"Reading PDF page {current} / {total}")
 
     def set_stage(self, stage: str) -> None:
         self.labels["Stage"].setText(stage.replace("_", " ").title())

@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 
 import pymupdf
-from PySide6.QtCore import QThread
+from PySide6.QtCore import QThread, Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QComboBox, QFileDialog, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QMainWindow,
@@ -30,6 +30,18 @@ from .settings_dialog import SettingsDialog
 from .tree_tab import TreeTab
 from .validation_tab import ValidationTab
 from ..camds.dry_run import write_dry_run_plan
+
+
+class WorkerThread(QThread):
+    """Run a QObject worker explicitly; avoids relying on QThread.started delivery."""
+
+    def __init__(self, worker: QObject, parent=None) -> None:
+        super().__init__(parent)
+        self.worker = worker
+        worker.moveToThread(self)
+
+    def run(self) -> None:
+        self.worker.run()
 
 
 class MainWindow(QMainWindow):
@@ -170,7 +182,6 @@ class MainWindow(QMainWindow):
         self.logs_tab.append("PARSER", "PDF parsing started; reading pages in background")
         worker = ParserWorker(self.source_path)
         thread = self._run_worker(worker)
-        thread.started.connect(worker.run)
         worker.progress_changed.connect(self._set_overall)
         worker.operation_progress_changed.connect(self.progress_tab.set_operation)
         worker.operation_progress_changed.connect(self._page_progress)
@@ -204,7 +215,6 @@ class MainWindow(QMainWindow):
         self.state_machine.transition(AppState.VALIDATING)
         worker = ValidationWorker(self.document.root)
         thread = self._run_worker(worker)
-        thread.started.connect(worker.run)
         worker.stage_changed.connect(self._set_stage)
         worker.progress_changed.connect(self._set_overall)
         worker.error.connect(self._worker_error)
@@ -242,7 +252,6 @@ class MainWindow(QMainWindow):
         worker = CamdsLoginWorker(CamdsBrowser(config), resolved)
         self._active_login_worker = worker
         thread = self._run_worker(worker)
-        thread.started.connect(worker.run)
         worker.stage_changed.connect(self._login_stage)
         worker.error.connect(self._worker_error)
         worker.verification_screenshot.connect(self._show_verification)
@@ -290,9 +299,8 @@ class MainWindow(QMainWindow):
             self.connection_label.setText("⚠ CAMDS: Not connected")
             self.logs_tab.append("ERROR", result.message)
 
-    def _run_worker(self, worker: object) -> QThread:
-        thread = QThread(self)
-        worker.moveToThread(thread)
+    def _run_worker(self, worker: QObject) -> QThread:
+        thread = WorkerThread(worker, self)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(thread.deleteLater)
@@ -301,6 +309,8 @@ class MainWindow(QMainWindow):
         return thread
 
     def _set_overall(self, value: int) -> None:
+        if self.overall.maximum() == 0:
+            self.overall.setRange(0, 100)
         self.overall.setValue(value)
         self.progress_tab.set_overall(value)
 

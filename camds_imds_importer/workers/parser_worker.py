@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal, Slot
-from pypdf import PdfReader
+import pymupdf
 
 from ..core.statistics import calculate_statistics
 from ..parser.models import MDSDocument
@@ -28,7 +28,10 @@ class ParserWorker(QObject):
         try:
             self.stage_changed.emit("PDF_LOADING")
             self.log_message.emit(f"Loading PDF: {self.path.name}")
-            total_pages = len(PdfReader(self.path).pages)
+            # PyMuPDF reads the document catalog quickly; do not block the UI
+            # on full pypdf page-tree expansion before publishing progress.
+            with pymupdf.open(self.path) as pdf:
+                total_pages = pdf.page_count
             self.operation_progress_changed.emit(0, total_pages)
             self.progress_changed.emit(1)
             self.stage_changed.emit("PDF_PARSING")

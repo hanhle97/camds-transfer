@@ -48,6 +48,7 @@ class MainWindow(QMainWindow):
         self.captcha_dialog: CaptchaDialog | None = None
         self._active_login_worker: CamdsLoginWorker | None = None
         self._parse_started_at: float | None = None
+        self._selected_page_count: int = 0
         self._build_ui()
         self._build_menu()
         self.state_machine.state_changed.connect(self._apply_state)
@@ -153,6 +154,7 @@ class MainWindow(QMainWindow):
         size_mb = self.source_path.stat().st_size / (1024 * 1024)
         self.file_label.setText(f"{self.source_path.name} ({size_mb:.1f} MB, {pages} pages)")
         self.overview_tab.set_source(self.source_path, pages)
+        self._selected_page_count = pages
         self.state_machine.transition(AppState.DOCUMENT_LOADED)
         self.start_parse()
 
@@ -163,6 +165,7 @@ class MainWindow(QMainWindow):
         self._parse_started_at = time.monotonic()
         self._set_overall_busy()
         self._set_stage("PDF_LOADING")
+        self._page_progress(0, self._selected_page_count)
         self.node_label.setText("Current node: Reading PDF pages…")
         self.logs_tab.append("PARSER", "PDF parsing started; reading pages in background")
         worker = ParserWorker(self.source_path)

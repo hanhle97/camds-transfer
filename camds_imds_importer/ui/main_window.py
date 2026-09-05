@@ -30,6 +30,7 @@ from .settings_dialog import SettingsDialog
 from .tree_tab import TreeTab
 from .validation_tab import ValidationTab
 from ..camds.dry_run import write_dry_run_plan
+from ..core.exporter import export_excel, export_pdf
 
 
 class WorkerThread(QThread):
@@ -139,6 +140,12 @@ class MainWindow(QMainWindow):
         import_action = QAction("Import IMDS PDF", self)
         import_action.triggered.connect(self.select_pdf)
         file_menu.addAction(import_action)
+        excel_action = QAction("Export parsed data to Excel", self)
+        excel_action.triggered.connect(self.export_excel_data)
+        file_menu.addAction(excel_action)
+        pdf_action = QAction("Export parsed data to PDF", self)
+        pdf_action.triggered.connect(self.export_pdf_data)
+        file_menu.addAction(pdf_action)
         camds_menu = self.menuBar().addMenu("CAMDS")
         login_action = QAction("Login CAMDS", self)
         login_action.triggered.connect(self.login_from_menu)
@@ -240,6 +247,22 @@ class MainWindow(QMainWindow):
             credentials = self.credentials.get_credentials()
         if credentials:
             self.start_test_login(credentials)
+
+    def export_excel_data(self) -> None:
+        if not self.document:
+            QMessageBox.information(self, "Export", "Parse a PDF before exporting.")
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Export Excel", "mds-data.xlsx", "Excel workbook (*.xlsx)")
+        if path:
+            export_excel(self.document, Path(path))
+
+    def export_pdf_data(self) -> None:
+        if not self.document:
+            QMessageBox.information(self, "Export", "Parse a PDF before exporting.")
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Export PDF", "mds-data.pdf", "PDF file (*.pdf)")
+        if path:
+            export_pdf(self.document, Path(path))
 
     def start_test_login(self, credentials: Credentials | None = None) -> None:
         resolved = credentials or self.credentials.get_credentials()

@@ -139,10 +139,6 @@ class MainWindow(QMainWindow):
         import_action = QAction("Import IMDS PDF", self)
         import_action.triggered.connect(self.select_pdf)
         file_menu.addAction(import_action)
-        settings_menu = self.menuBar().addMenu("Settings")
-        account_action = QAction("CAMDS Account", self)
-        account_action.triggered.connect(self.open_settings)
-        settings_menu.addAction(account_action)
         camds_menu = self.menuBar().addMenu("CAMDS")
         login_action = QAction("Login CAMDS", self)
         login_action.triggered.connect(self.login_from_menu)
@@ -239,10 +235,11 @@ class MainWindow(QMainWindow):
 
     def login_from_menu(self) -> None:
         credentials = self.credentials.get_credentials()
+        if not credentials:
+            self.open_settings()
+            credentials = self.credentials.get_credentials()
         if credentials:
             self.start_test_login(credentials)
-        else:
-            self.open_settings()
 
     def start_test_login(self, credentials: Credentials | None = None) -> None:
         resolved = credentials or self.credentials.get_credentials()

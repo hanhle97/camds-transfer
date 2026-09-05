@@ -111,6 +111,13 @@ async def login(
     await password_input.fill(password)
     await login_button.click()
 
+    # Capture the post-submit cookie jar. CATARC may complete the slider in
+    # the browser without changing the hash or exposing a stable menu DOM.
+    cookies_before_verification = {
+        (item["name"], item["domain"], item["path"], item.get("value", ""))
+        for item in await page.context.cookies()
+    }
+
     if await verification_required(page):
         if stage_callback:
             stage_callback(LoginStatus.WAITING_USER_VERIFICATION)
@@ -121,7 +128,12 @@ async def login(
             code = verification_code_provider() if verification_code_provider else None
             if code:
                 await _enter_verification_code(page, code)
-            if await is_authenticated(page):
+            cookies_now = {
+                (item["name"], item["domain"], item["path"], item.get("value", ""))
+                for item in await page.context.cookies()
+            }
+            cookie_session_changed = cookies_now != cookies_before_verification
+            if await is_authenticated(page) or (cookie_session_changed and not await _first_visible(page, LOGIN_PASSWORD)):
                 break
             await asyncio.sleep(1.0)
         else:

@@ -235,6 +235,12 @@ class SemiRecorder:
     async def verify_substance(self, path, node, at=(0, 1)):
         pass
 
+    async def can_reenter_saved(self):
+        return False
+
+    async def saved_children(self, path, at=(0, 1)):
+        return []
+
     async def read_back_findings(self):
         return []
 

@@ -119,7 +119,11 @@ class DraftBrowser:
             raise RuntimeError("CAMDS ID/version is missing")
         return tuple(match.groups())
 
-    async def create_root(self, node, on_allocated=None):
+    async def create_root(self, node, on_allocated=None, existing=None):
+        if existing is not None:
+            raise RuntimeError(
+                "Re-entering a saved draft editor has not been discovered against CAMDS. "
+                "Resume needs the JSON API backend.")
         if self.ops.editor_open or "#/createComponent/" in self.page.url:
             await self.leave(CREATE_URL)
         await self.ops.create(CreateRequest(
@@ -347,6 +351,14 @@ class DraftBrowser:
         await dialog.wait_for(state="hidden", timeout=30_000)
         await self.settled()
 
+    async def can_reenter_saved(self) -> bool:
+        """Re-entering a saved draft editor has never been discovered against
+        CAMDS in the browser, so a half-built tree cannot be continued here."""
+        return False
+
+    async def saved_children(self, path, at=(0, 1)):
+        raise RuntimeError("Reading a saved node's children needs the JSON API backend")
+
     async def read_back_findings(self) -> list[str]:
         """Differences accepted during read-back. This backend compares only
         what it can read from the form, and every such check either matches or
@@ -400,6 +412,25 @@ class DraftBrowser:
         await self.verify_proportion(node)
 
 
+def _already_saved(substance, held):
+    """The name CAMDS shows for this substance if it is already in the Material.
+
+    Matched the way read-back matches: on the stable CAS where there is one,
+    and on the name for a system group, which has none.
+    """
+    if not held:
+        return None
+    cas = real_cas(substance)
+    wanted = str(substance.get("name") or "").strip().casefold()
+    for child in held:
+        if cas:
+            if str(child.get("cas") or "").strip() == cas:
+                return child["name"]
+        elif str(child.get("name") or "").strip().casefold() == wanted:
+            return child["name"]
+    return None
+
+
 class TreeImporter:
     def __init__(self, backend, directory=Path("output/camds_imports"), progress=lambda event: None,
                  control=None, mapping=None):
@@ -410,8 +441,13 @@ class TreeImporter:
         self.resolve_by_name = True
         self.skipped: list[str] = []
 
-    def _open_journal(self, request, resume):
-        """Return (journal, ResumeState). Refuses any re-entry that cannot be made safe."""
+    def _open_journal(self, request, resume, can_reenter=False):
+        """Return (journal, ResumeState). Refuses any re-entry that cannot be made safe.
+
+        `can_reenter` says whether the backend can reopen a saved MDS and add to
+        it. Over the JSON API it can, so a half-built Material is continued
+        against what CAMDS actually holds rather than abandoned.
+        """
         path = self.directory / (request.fingerprint + ".jsonl")
         if not path.exists():
             return ImportJournal(path, fingerprint=request.fingerprint), ResumeState()
@@ -424,7 +460,7 @@ class TreeImporter:
             raise RuntimeError("This import already completed and was verified through Search / View; nothing to resume.")
         # A draft editor cannot be re-entered after the browser is gone, so a
         # half-built Material or parent must not be silently rebuilt.
-        if state.incomplete_materials:
+        if state.incomplete_materials and not can_reenter:
             listed = ", ".join(uid + " = " + ("/".join(ref) if ref else "no ID recorded")
                                for uid, ref in sorted(state.incomplete_materials.items()))
             raise RuntimeError(
@@ -489,7 +525,7 @@ class TreeImporter:
         plan = request.plan()
         # Login/readiness failures should not create a duplicate-prevention journal.
         await self.io.prepare()
-        journal, state = self._open_journal(request, resume)
+        journal, state = self._open_journal(request, resume, await self.io.can_reenter_saved())
         reporter = Reporter(len(plan), self.progress)
         # Field-level progress is emitted by the backend while it fills a form.
         setattr(self.io, "reporter", reporter)
@@ -542,19 +578,39 @@ class TreeImporter:
                     record("existing_material_verified", uid=mat["uid"], ref=refs[mat["uid"]],
                            display_name=names[mat["uid"]])
                     continue
-                record("create_material_requested", uid=mat["uid"], name=mat["name"])
-                # Journal the id the moment CAMDS issues it: a failure while the
-                # node is being filled must still leave the id recoverable.
-                ref = await self.io.create_root(mat, on_allocated=lambda allocated: record(
-                    "material_id_allocated", uid=mat["uid"], ref=allocated))
-                refs[mat["uid"]] = ref
-                await save(mat["uid"])
+                held = None
+                if mat["uid"] in state.incomplete_materials:
+                    # Created by an earlier run but never verified. Reopen it and
+                    # continue from what CAMDS holds - not from what the journal
+                    # last managed to write, which a crash can cut short after
+                    # the substance was already added.
+                    ref = refs[mat["uid"]] = await self.io.create_root(
+                        mat, existing=state.incomplete_materials[mat["uid"]])
+                    held = await self.io.saved_children([])
+                    record("material_resumed", uid=mat["uid"], ref=ref, name=mat["name"],
+                           substances_already_saved=len(held))
+                else:
+                    record("create_material_requested", uid=mat["uid"], name=mat["name"])
+                    # Journal the id the moment CAMDS issues it: a failure while
+                    # the node is being filled must still leave the id
+                    # recoverable.
+                    ref = await self.io.create_root(mat, on_allocated=lambda allocated: record(
+                        "material_id_allocated", uid=mat["uid"], ref=allocated))
+                    refs[mat["uid"]] = ref
+                    await save(mat["uid"])
                 reporter.done()
                 substance_names = {}
                 # Rest is attached last so other portions are already present.
                 for substance in sorted(mat["children"], key=lambda n: bool(n.get("is_rest"))):
                     await gate()
                     reporter.step(substance["uid"], substance["name"], "SUBSTANCE", (mat["name"],))
+                    saved = _already_saved(substance, held)
+                    if saved is not None:
+                        substance_names[substance["uid"]] = saved
+                        record("substance_already_saved", uid=substance["uid"], name=saved)
+                        reporter.done()
+                        reporter("skipped_completed")
+                        continue
                     record("add_substance_requested", uid=substance["uid"], name=substance["name"])
                     substance_names[substance["uid"]] = await self.io.add_substance(mat["name"], substance)
                     await save(substance["uid"])

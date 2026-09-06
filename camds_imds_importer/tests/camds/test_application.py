@@ -120,6 +120,12 @@ async def test_an_unplaceable_application_is_reported_even_if_the_run_fails(tmp_
         async def create_root(self, node, on_allocated=None):
             raise RuntimeError("CAMDS refused")
 
+        async def can_reenter_saved(self):
+            return False
+
+        async def saved_children(self, path, at=(0, 1)):
+            return []
+
         async def read_back_findings(self):
             return []
 
@@ -157,6 +163,12 @@ class ApplicationBrowser:
 
     async def add_substance(self, name, node):
         return node["name"]
+
+    async def can_reenter_saved(self):
+        return False
+
+    async def saved_children(self, path, at=(0, 1)):
+        return []
 
     async def read_back_findings(self):
         return []

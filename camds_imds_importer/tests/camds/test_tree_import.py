@@ -154,6 +154,12 @@ def test_snapshot_is_detached_from_parser_edits():
 
 class FakeDraftBrowser:
 
+    async def can_reenter_saved(self):
+        return False
+
+    async def saved_children(self, path, at=(0, 1)):
+        return []
+
     async def read_back_findings(self):
         return []
     def __init__(self, fail_save=None, fail_readback=False):

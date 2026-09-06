@@ -23,7 +23,7 @@ from .api import (CLASSIFICATION, FIXED, FROM_TO, MASS_PER_ITEM, MATERIAL_NODE, 
                   NODE_CAS, NODE_NAME,
                   NUMBER, REL_MASS, REL_MASS_UNIT, REL_MODE, REL_QUANTITY, REL_RATE, REST,
                   SEARCH_CAS, SEARCH_ID,
-                  SEARCH_NAME, WEIGHT_UNIT, CamdsApiError, addressable, portion)
+                  SEARCH_NAME, WEIGHT_UNIT, CamdsApiError, TreeNode, addressable, portion)
 from .import_plan import proportion, real_cas
 from .material_classifications import classification_code
 
@@ -83,6 +83,8 @@ class ApiBackend:
         # Read-back differences that are accepted but reported, not failures.
         self.findings: list[str] = []
         self._kind: dict[str, int | None] = {}   # strutsId -> nodeType
+        self._text: dict[str, str] = {}          # strutsId -> label CAMDS shows
+        self._cas: dict[str, str | None] = {}    # strutsId -> CAS, for Substances
 
     # ------------------------------------------------------------- bookkeeping
     def _remember(self, path: tuple, struts_id: str) -> None:
@@ -120,6 +122,12 @@ class ApiBackend:
         self._children[struts_id] = [addressable(child["id"])
                                      for child in node.get("children") or []]
         self._kind[struts_id] = node.get("nodeType")
+        # CAMDS may label a saved substance in either language, so the English
+        # name is what a resumed run compares - the same field read-back uses.
+        self._text[struts_id] = node.get("cenName") or node.get("text") or ""
+        # loadMdsTree carries the CAS, so a saved composition can be read back
+        # and reconciled without loading every node.
+        self._cas[struts_id] = node.get("cascode")
         if node.get("cmatClsId"):
             self._classification[struts_id] = node["cmatClsId"]
         if (node.get("rf") or str(node.get("crefFlag") or "") == "1") and node.get("mdsId"):
@@ -159,13 +167,35 @@ class ApiBackend:
                 f"({exc}). Sign in again in the browser window, then retry; "
                 "nothing was allocated.") from exc
 
-    async def create_root(self, node, on_allocated=None) -> tuple[str, str]:
+    async def create_root(self, node, on_allocated=None, existing=None) -> tuple[str, str]:
         """Allocate the MDS, then fill it.
 
         `on_allocated` is called the moment CAMDS issues the id, before any
         field is written. A failure while filling would otherwise leave an id
         consumed in CAMDS that no journal can name.
+
+        `existing` reopens an MDS an earlier run already allocated and fills it
+        again instead of spending a second id. The fields are written the same
+        way either way, so a run interrupted before or during the fill ends up
+        in the same state as one that never stopped.
         """
+        if existing is not None:
+            material = node["node_type"] == "MATERIAL"
+            kind = "Material" if material else "Component"
+            await self.open_saved(kind, existing)
+            fields = ({NAME: node["name"], **named(node.get("material_number"))} if material else
+                      {NAME: node["name"], **named(node.get("part_number")),
+                       MASS_PER_ITEM: number(node["weight_g"]), WEIGHT_UNIT: "g"})
+            await self.api.set_fields(self.root.struts_id, fields)
+            # Read the tree again so paths are indexed under the name now
+            # stored: a run interrupted during the fill left the old label, and
+            # every later step addresses this node by the name being imported.
+            await self.open_saved(kind, existing)
+            self._substances = {}
+            self._material = ((self.root.struts_id, self.root.mds_id,
+                               classification_code(node.get("classification")))
+                              if material else None)
+            return self.root.reference
         if node["node_type"] == "MATERIAL":
             code = classification_code(node.get("classification"))
             created = await self.api.create_material_root(code)
@@ -292,11 +322,29 @@ class ApiBackend:
         else:
             await self.api.mds_status(ref[0])
         tree = await self.api.load_tree(ref[0])
-        self.root = type(self.root).from_payload(tree) if self.root else None
+        # Always rebuild the root: resuming opens a saved MDS this backend has
+        # not created, and everything added afterwards addresses root.mds_id.
+        self.root = TreeNode.from_payload(tree)
         self._paths, self._children, self._classification = {}, {}, {}
         self._referenced, self._kind = {}, {}
+        self._text, self._cas = {}, {}
         self._map_tree(tree)
         await self._load(addressable(tree["id"]))
+
+    async def can_reenter_saved(self) -> bool:
+        """A saved MDS can be reopened and added to, so a run can be resumed."""
+        return True
+
+    async def saved_children(self, path, at=(0, 1)) -> list[dict]:
+        """What CAMDS already holds under a node, from the tree it just served.
+
+        Reconciling a resumed run against CAMDS rather than against the journal
+        is what keeps it from adding a second copy of something that a failure
+        interrupted after the write but before the journal entry.
+        """
+        parent = self._resolve(path, at) if path else self.current
+        return [{"name": self._text.get(child, ""), "cas": self._cas.get(child)}
+                for child in self._children.get(parent, [])]
 
     async def select(self, path, at=(0, 1)) -> None:
         await self._load(self._resolve(path, at))

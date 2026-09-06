@@ -48,6 +48,12 @@ class RecordingBrowser:
     async def add_substance(self, name, node):
         return node["name"]
 
+    async def can_reenter_saved(self):
+        return False
+
+    async def saved_children(self, path, at=(0, 1)):
+        return []
+
     async def read_back_findings(self):
         return []
 

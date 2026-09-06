@@ -77,7 +77,10 @@ class FakeCamds:
             # Attaching turns a search row into a node record, renaming as CAMDS does.
             self.nodes[sid]["data"].update({"csubId": found["csid"], "ccasCode": found["cas"],
                                             "cenName": found["enName"], "cname": found.get("name")})
-            self.nodes[sid]["treeDataNode"]["text"] = found["enName"]
+            # loadMdsTree carries the CAS on the tree node itself, which is how
+            # a resumed run recognises a substance it already saved.
+            self.nodes[sid]["treeDataNode"].update(text=found["enName"], cascode=found["cas"],
+                                                   cenName=found["enName"])
             return {"treeDataNode": self._attach(params["parentStrutsId"], sid)}
         if url.endswith("substituteMdsNode"):
             sid = self._new("REF", 3, text="Steel")
@@ -299,7 +302,7 @@ async def test_the_api_backend_answers_every_call_the_importer_makes():
     from camds_imds_importer.camds import tree_import
     source = inspect.getsource(tree_import)
     called = sorted(set(re.findall(r"self\.io\.(\w+)", source)))
-    assert len(called) == 19
+    assert len(called) == 21
     for name in called:
         assert callable(getattr(ApiBackend, name, None)), f"ApiBackend cannot {name}"
 
@@ -361,11 +364,17 @@ async def test_an_id_is_journalled_before_the_node_is_filled(tmp_path):
     allocated = next(e for e in events if e["event"] == "material_id_allocated")
     assert allocated["ref"][0].startswith("CA_8_"), "the journal must name the spent id"
     assert events[-1]["event"] == "interrupted_or_failed"
-    # And resume must refuse, naming that id rather than creating a second one.
-    retry = FakeCamds()
-    with pytest.raises(RuntimeError, match="created but never verified"):
-        await TreeImporter(backend(retry), tmp_path).run(ImportRequest(material()), resume=True)
-    assert retry.nodes == {}
+    # Resume reopens that id and finishes it; it never allocates a second one.
+    camds._route = original
+    before = len([n for n in camds.nodes.values() if n["treeDataNode"]["nodeType"] == 3])
+    await TreeImporter(backend(camds), tmp_path).run(ImportRequest(material()), resume=True)
+    after = [n for n in camds.nodes.values() if n["treeDataNode"]["nodeType"] == 3]
+    assert len(after) == before == 1, "resume must not allocate a second Material"
+    assert after[0]["data"]["cname"] == "Steel", "the fill the failure interrupted is completed"
+    resumed = [json.loads(line) for line in next(tmp_path.glob("*.jsonl")).read_text(
+        encoding="utf-8").splitlines()]
+    assert any(e["event"] == "material_resumed" and e["ref"] == allocated["ref"]
+               for e in resumed), resumed
 
 
 async def test_an_unresolvable_substance_names_what_the_catalogue_offered(tmp_path):
@@ -482,3 +491,71 @@ async def test_a_fixed_portion_is_still_checked_by_value():
     made.view["structureVO"] = {"crateType": 2, "crate": 40.0, "cminRate": 0, "cmaxRate": 0}
     with pytest.raises(CamdsApiError, match="proportion mismatch"):
         await made.verify_proportion({"name": "VMQ", "percentage": 50.0})
+
+
+async def test_resume_adds_only_the_substances_camds_does_not_already_hold(tmp_path):
+    """Reconciled against CAMDS, not against the journal.
+
+    A crash between the write and the journal entry would otherwise add a second
+    copy of a substance CAMDS already saved.
+    """
+    camds = FakeCamds()
+    original = camds._route
+    root = material(children=[substance(uid="s1"),
+                              substance(uid="s2", cas="system", name="Misc., not to declare")])
+
+    def refuse_the_second_substance(url, params, body):
+        if url.endswith("addNewSubstanceToTree") and params["subId"] == "8172":
+            raise CamdsApiError("addNewSubstanceToTree refused: 程序异常")
+        return original(url, params, body)
+
+    camds._route = refuse_the_second_substance
+    with pytest.raises(CamdsApiError):
+        await TreeImporter(backend(camds), tmp_path).run(ImportRequest(root))
+    assert len([n for n in camds.nodes.values() if n["treeDataNode"]["nodeType"] == 4]) == 1
+
+    camds._route = original
+    await TreeImporter(backend(camds), tmp_path).run(ImportRequest(root), resume=True)
+
+    saved = [n for n in camds.nodes.values() if n["treeDataNode"]["nodeType"] == 4]
+    assert sorted(n["data"]["ccasCode"] for n in saved) == ["7439-89-6", "system"]
+    events = [json.loads(line) for line in next(tmp_path.glob("*.jsonl")).read_text(
+        encoding="utf-8").splitlines()]
+    assert [e["name"] for e in events if e["event"] == "substance_already_saved"] == ["Iron"]
+
+
+async def test_the_browser_backend_still_refuses_to_resume():
+    """No flow for re-entering a saved draft has been discovered there."""
+    from camds_imds_importer.camds.tree_import import DraftBrowser
+
+    browser = DraftBrowser.__new__(DraftBrowser)
+    assert await browser.can_reenter_saved() is False
+    with pytest.raises(RuntimeError, match="not been discovered"):
+        await browser.create_root({"node_type": "MATERIAL", "name": "Steel"},
+                                  existing=("CA_8_1", "0.01"))
+
+
+async def test_resume_recognises_a_system_group_camds_relabelled(tmp_path):
+    """A system group has no CAS, so it is matched on its name - and CAMDS shows
+    a saved substance in either language. The English name is what both a
+    resumed run and read-back compare, so the Chinese label does not hide it."""
+    camds = FakeCamds()
+    original = camds._route
+    root = material(children=[substance(uid="s1", cas="system", name="Misc., not to declare"),
+                              substance(uid="s2")])
+
+    def refuse_iron(url, params, body):
+        if url.endswith("addNewSubstanceToTree") and params["subId"] == "2995":
+            raise CamdsApiError("addNewSubstanceToTree refused: 程序异常")
+        return original(url, params, body)
+
+    camds._route = refuse_iron
+    with pytest.raises(CamdsApiError):
+        await TreeImporter(backend(camds), tmp_path).run(ImportRequest(root))
+    system_node = next(n for n in camds.nodes.values() if n["treeDataNode"]["nodeType"] == 4)
+    assert system_node["treeDataNode"]["text"] == "杂质，不需申报", "CAMDS relabelled it"
+
+    camds._route = original
+    await TreeImporter(backend(camds), tmp_path).run(ImportRequest(root), resume=True)
+    saved = [n for n in camds.nodes.values() if n["treeDataNode"]["nodeType"] == 4]
+    assert len(saved) == 2, "the relabelled group must not be added a second time"

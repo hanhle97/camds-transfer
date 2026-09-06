@@ -25,6 +25,7 @@ from .api import (CLASSIFICATION, FIXED, FROM_TO, MASS_PER_ITEM, MATERIAL_NODE, 
                   SEARCH_CAS, SEARCH_ID,
                   SEARCH_NAME, WEIGHT_UNIT, CamdsApiError, TreeNode, addressable, portion)
 from .import_plan import proportion, real_cas
+from .substance_mapping import SubstanceMapping
 from .material_classifications import classification_code
 
 # What the importer asks for, and where CAMDS keeps it. A value that describes
@@ -65,8 +66,11 @@ def number(value) -> str:
 
 
 class ApiBackend:
-    def __init__(self, api) -> None:
+    def __init__(self, api, substances=None) -> None:
         self.api = api
+        # Choices a person has already made, and the ones this run ran into.
+        self.substances = substances if substances is not None else SubstanceMapping()
+        self.pending: list[tuple[dict, list]] = []
         self.reporter = None
         self.root = None                 # TreeNode of the tree being built or read
         self.current: str | None = None  # strutsId the importer last selected
@@ -323,17 +327,34 @@ class ApiBackend:
         a substance the catalogue does not hold.
         """
         cas = real_cas(node)
+        wanted = str(node.get("name") or "").strip().casefold()
         if cas:
             rows = await self.api.find_substance(cas=cas)
             hits = [r for r in rows if str(r.get(SEARCH_CAS) or "").strip() == cas]
+            if len(hits) > 1:
+                # Several rows share the CAS under different names. The report
+                # names one of them, and that is the report's own evidence, not
+                # a preference of ours: "7440-21-3" is offered as "P-SI" and as
+                # "Silicon", and the substance being imported is called Silicon.
+                named = [r for r in hits if str(r.get(SEARCH_NAME) or "").strip().casefold() == wanted]
+                if len(named) == 1:
+                    return named[0]
             criterion = f"CAS {cas}"
         else:
             rows = await self.api.find_substance(name=node["name"])
-            wanted = node["name"].strip().casefold()
             hits = [r for r in rows if str(r.get(SEARCH_NAME) or "").strip().casefold() == wanted]
             criterion = f"name {node['name']!r}"
         if len(hits) == 1:
             return hits[0]
+        chosen = self.substances.chosen(node)
+        if chosen:
+            picked = [r for r in rows if str(r.get(SEARCH_ID)) == chosen]
+            if len(picked) == 1:
+                return picked[0]
+            raise CamdsApiError(
+                f"{node['name']}: the recorded choice {chosen} is no longer one of the "
+                f"{len(rows)} row(s) CAMDS offers. " + _offered(rows))
+        self.pending.append((node, rows))
         raise CamdsApiError(
             f"{node['name']}: searching the CAMDS substance catalogue by {criterion} "
             f"matched {len(hits)} entries exactly, not one. " + _offered(rows))

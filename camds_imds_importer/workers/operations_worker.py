@@ -152,9 +152,17 @@ class OperationsWorker(QThread):
                 unresolved.append(str(exc))
         note = (f"Checked {len(nodes)} distinct substance lookup(s) for "
                 f"{len(request.materials())} Material(s). Nothing was created. ")
-        note += ("Every one resolved to exactly one CAMDS entry."
-                 if not unresolved else
-                 f"{len(unresolved)} did not resolve and would stop an import.")
+        if not unresolved:
+            note += "Every one resolved to exactly one CAMDS entry."
+        else:
+            # Write the questions next to the rows CAMDS offered, so the choice
+            # is made against the evidence rather than from a log line.
+            for node, rows in backend.pending:
+                backend.substances.ask(node, rows)
+            backend.substances.save()
+            note += (f"{len(unresolved)} did not resolve and would stop an import. "
+                     f"Each is written to {backend.substances.path} with the rows CAMDS "
+                     "offered; fill in \"csid\" for the intended one.")
         return {"kind": "check_substances", "identity": "", "editor_open": False,
                 "note": note, "warnings": unresolved[:MAX_REPORTED_ERRORS],
                 "skipped": []}

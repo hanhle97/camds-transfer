@@ -16,6 +16,21 @@ from ..camds.operations import SearchRequest, CreateRequest, KINDS
 from ..workers.operations_worker import OperationsWorker
 from .import_dialog import ImportDialog
 
+# What the operator is told the moment an action is submitted. Keyed by the
+# same names as ACTION_POLICY, and tested to stay in step with it: an action
+# added to one map and not the others used to reach the user as a KeyError.
+SUBMIT_STATUS = {
+    "search": "Searching CAMDS…",
+    "create": "Preparing root…",
+    "save": "Saving open draft…",
+    "leave_editor": "Leaving the editor and returning to Search…",
+    "discover_classifications": "Opening the classification wizard to record it; nothing is created…",
+    "api_check": "Checking the CAMDS API session; nothing is created…",
+    "check_substances": "Looking up every substance of the parsed tree; nothing is created…",
+    "import_tree": "Transferring parsed tree; saving each step…",
+    "login": "Signing in on this browser session…",
+}
+
 
 class CamdsTab(QWidget):
     log_message = Signal(str)
@@ -261,11 +276,7 @@ class CamdsTab(QWidget):
         self.importing = action == "import_tree"
         self.last_error = ""
         self.results.setRowCount(0)
-        self.status.setText({"search": "Searching CAMDS…", "create": "Preparing root…", "save": "Saving open draft…", "leave_editor": "Leaving the editor and returning to Search…",
-                             "discover_classifications": "Opening the classification wizard to record it; nothing is created…",
-                             "api_check": "Checking the CAMDS API session; nothing is created…",
-                             "import_tree": "Transferring parsed tree; saving each step…",
-                             "login": "Signing in on this browser session…"}[action])
+        self.status.setText(SUBMIT_STATUS[action])
         if options:
             self.worker.submit(action, request, **options)
         else:

@@ -46,6 +46,16 @@ async def test_sign_in_reuses_the_open_session_instead_of_logging_in_again(monke
     assert page.storage_calls == [tmp_path / "state.json"]
 
 
+def test_every_action_has_the_words_shown_while_it_runs():
+    """An action added to the policy but not to a message map reached the
+    operator as a KeyError, after the click, with the operation lost."""
+    from camds_imds_importer.ui.camds_tab import SUBMIT_STATUS
+    from camds_imds_importer.workers.operations_worker import PROGRESS_TEXT
+
+    assert set(PROGRESS_TEXT) == set(ACTION_POLICY), "worker progress text"
+    assert set(SUBMIT_STATUS) == set(ACTION_POLICY), "status shown on submit"
+
+
 def test_every_dispatchable_action_is_classified_and_sensitive_ones_fail_closed():
     assert set(ACTION_POLICY) == {"login", "search", "create", "save", "leave_editor",
                                   "discover_classifications", "api_check", "import_tree",

@@ -27,6 +27,18 @@ from ..camds.session import SessionStatus, session_status, sign_in
 from ..camds.tree_import import TreeImporter, DraftBrowser
 
 LOGIN_URL = "https://catarc.camds.org.cn/#/login"
+PROGRESS_TEXT = {
+    "search": "Searching…",
+    "create": "Creating MDS root…",
+    "save": "Saving…",
+    "leave_editor": "Leaving the editor…",
+    "discover_classifications": "Recording the classification wizard…",
+    "api_check": "Checking the CAMDS API session…",
+    "check_substances": "Checking every substance in the catalogue…",
+    "import_tree": "Importing parsed tree…",
+    "login": "Signing in…",
+}
+
 SESSION_POLL_SECONDS = 20.0
 # CAMDS is reachable from outside China but with a high round-trip time, and the
 # SPA pulls large vendor bundles. "domcontentloaded" blocks on every synchronous
@@ -251,13 +263,7 @@ class OperationsWorker(QThread):
                             except (RuntimeError, SensitiveActionBlocked) as exc:
                                 self.failed.emit(str(exc), operations.editor_open)
                             else:
-                                self.operation_progress.emit("CAMDS: " + {
-                                    "search": "Searching…", "create": "Creating MDS root…", "save": "Saving…",
-                                    "leave_editor": "Leaving the editor…",
-                                    "discover_classifications": "Recording the classification wizard…",
-                                    "api_check": "Checking the CAMDS API session…",
-                                    "check_substances": "Checking every substance in the catalogue…",
-                                    "import_tree": "Importing parsed tree…", "login": "Signing in…"}[action])
+                                self.operation_progress.emit("CAMDS: " + PROGRESS_TEXT[action])
                                 if action == "import_tree":
                                     # Reset in place: the UI already holds this object.
                                     self.control.reset()

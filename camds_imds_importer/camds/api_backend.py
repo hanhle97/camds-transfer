@@ -21,7 +21,8 @@ from __future__ import annotations
 
 from .api import (CLASSIFICATION, FIXED, FROM_TO, MASS_PER_ITEM, MATERIAL_NODE, NAME,
                   NODE_CAS, NODE_NAME,
-                  NUMBER, REL_MASS, REL_MASS_UNIT, REL_QUANTITY, REST, SEARCH_CAS, SEARCH_ID,
+                  NUMBER, REL_MASS, REL_MASS_UNIT, REL_MODE, REL_QUANTITY, REL_RATE, REST,
+                  SEARCH_CAS, SEARCH_ID,
                   SEARCH_NAME, WEIGHT_UNIT, CamdsApiError, addressable, portion)
 from .import_plan import proportion, real_cas
 from .material_classifications import classification_code
@@ -79,6 +80,8 @@ class ApiBackend:
         # Nodes that point at another MDS; CAMDS is asked about one before it
         # will serve that node, and about a Material again before its substances.
         self._referenced: dict[str, str] = {}
+        # Read-back differences that are accepted but reported, not failures.
+        self.findings: list[str] = []
         self._kind: dict[str, int | None] = {}   # strutsId -> nodeType
 
     # ------------------------------------------------------------- bookkeeping
@@ -343,9 +346,27 @@ class ApiBackend:
         raise CamdsApiError(
             f"Saved Substance {'CAS ' + cas if cas else repr(node['name'])} is missing")
 
+    async def read_back_findings(self) -> list[str]:
+        """Differences the read-back accepted, for the operator to judge."""
+        found, self.findings = list(self.findings), []
+        return found
+
     async def verify_proportion(self, node, what="Substance") -> None:
+        """Check the portion CAMDS saved against the one the report declares.
+
+        Rest is checked as a mode and not as a number. "Rest" means whatever the
+        siblings leave over, so CAMDS computes the value itself; the figure IMDS
+        prints beside it - "Rest 7.98" - describes the same remainder rather than
+        instructing one, and demanding it back is asking CAMDS to agree with an
+        arithmetic it did not perform.
+        """
         expected = portion(*self._portion(node))
         relation = (self.view or {}).get("structureVO") or {}
+        if str(relation.get(REL_MODE)) != str(expected[REL_MODE]):
+            raise CamdsApiError(f"Saved {what} portion mode: {relation.get(REL_MODE)} "
+                                f"!= {expected[REL_MODE]}")
+        if expected[REL_MODE] == REST:
+            return self._compare_rest(node, relation, what)
         for field, wanted in expected.items():
             actual = relation.get(field)
             if isinstance(wanted, (int, float)):
@@ -354,6 +375,24 @@ class ApiBackend:
                                         f"{actual} != {wanted}")
             elif str(actual) != str(wanted):
                 raise CamdsApiError(f"Saved {what} proportion mismatch: {field}")
+
+    def _compare_rest(self, node, relation, what) -> None:
+        """Report, but do not refuse, a remainder that differs from the report's.
+
+        A difference here means the siblings do not add up the way the report
+        says they do. That is the operator's judgement to make - the declared
+        composition is what it is - so it is recorded and handed back with the
+        result rather than stopping a run that CAMDS accepted.
+        """
+        printed, computed = node.get("percentage"), relation.get(REL_RATE)
+        if printed is None or computed is None:
+            return
+        difference = abs(float(computed) - float(printed))
+        if difference > 0.01:
+            self.findings.append(
+                f"{node.get('name')}: the report prints Rest {printed}, CAMDS computed "
+                f"{computed} from the other portions (difference {difference:.4g}). "
+                "The remainder CAMDS holds is the one it calculated.")
 
     # ------------------------------------------------------------- applications
     async def application_options(self, substance_name):

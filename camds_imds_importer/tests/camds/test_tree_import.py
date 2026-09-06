@@ -153,6 +153,9 @@ def test_snapshot_is_detached_from_parser_edits():
 
 
 class FakeDraftBrowser:
+
+    async def read_back_findings(self):
+        return []
     def __init__(self, fail_save=None, fail_readback=False):
         self.calls = []
         self.saves = 0

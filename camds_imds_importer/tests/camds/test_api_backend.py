@@ -299,7 +299,7 @@ async def test_the_api_backend_answers_every_call_the_importer_makes():
     from camds_imds_importer.camds import tree_import
     source = inspect.getsource(tree_import)
     called = sorted(set(re.findall(r"self\.io\.(\w+)", source)))
-    assert len(called) == 18
+    assert len(called) == 19
     for name in called:
         assert callable(getattr(ApiBackend, name, None)), f"ApiBackend cannot {name}"
 
@@ -435,3 +435,50 @@ async def test_a_referenced_material_is_asked_about_before_it_is_read(tmp_path):
     await TreeImporter(backend(camds), tmp_path).run(ImportRequest(tree()))
     assert asked, "a referenced Material must be announced before it is read"
     assert all(mds.startswith("CA_8_") for mds in asked)
+
+
+def _rest_backend(saved_rate):
+    """A backend positioned on a saved Rest substance CAMDS resolved itself."""
+    from camds_imds_importer.camds.api_backend import ApiBackend
+
+    made = ApiBackend(FakeCamds())
+    made.view = {"data": {}, "structureVO": {"crateType": 3, "crate": saved_rate,
+                                             "cminRate": 0, "cmaxRate": 0}}
+    return made
+
+
+async def test_a_saved_rest_is_verified_as_a_mode_not_as_a_number():
+    """IMDS prints "Rest 7.98"; CAMDS computes the remainder and stores 7.98.
+
+    We write Rest with no value, so demanding our 0 back fails a portion CAMDS
+    saved correctly. This ended a live run on 2026-09-06.
+    """
+    made = _rest_backend(7.98)
+    await made.verify_proportion({"name": "VMQ", "is_rest": True, "percentage": 7.98})
+    assert made.findings == []
+
+
+async def test_a_remainder_camds_computes_differently_is_reported_not_refused():
+    made = _rest_backend(9.5)
+    await made.verify_proportion({"name": "VMQ", "is_rest": True, "percentage": 7.98})
+    assert len(made.findings) == 1
+    assert "7.98" in made.findings[0] and "9.5" in made.findings[0]
+
+
+async def test_a_saved_portion_of_the_wrong_mode_still_fails():
+    """Rest and Fixed are different declarations, whatever the numbers say."""
+    from camds_imds_importer.camds.api import CamdsApiError
+
+    made = _rest_backend(7.98)
+    made.view["structureVO"]["crateType"] = 2
+    with pytest.raises(CamdsApiError, match="portion mode"):
+        await made.verify_proportion({"name": "VMQ", "is_rest": True, "percentage": 7.98})
+
+
+async def test_a_fixed_portion_is_still_checked_by_value():
+    from camds_imds_importer.camds.api import CamdsApiError
+
+    made = _rest_backend(7.98)
+    made.view["structureVO"] = {"crateType": 2, "crate": 40.0, "cminRate": 0, "cmaxRate": 0}
+    with pytest.raises(CamdsApiError, match="proportion mismatch"):
+        await made.verify_proportion({"name": "VMQ", "percentage": 50.0})

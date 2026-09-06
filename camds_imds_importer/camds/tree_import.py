@@ -339,6 +339,12 @@ class DraftBrowser:
         await dialog.wait_for(state="hidden", timeout=30_000)
         await self.settled()
 
+    async def read_back_findings(self) -> list[str]:
+        """Differences accepted during read-back. This backend compares only
+        what it can read from the form, and every such check either matches or
+        raises, so it never has any."""
+        return []
+
     async def verify_proportion(self, node, what="Substance"):
         """Read back From-To / Fixed / Rest. The read-only View omits the native
         radio inputs and renames the accessible options."""
@@ -624,9 +630,15 @@ class TreeImporter:
                                 await self.io.verify_value("Mass", float(child["weight_g"]))
                 await verify(root, [root["name"]])
             record("complete_readback_verified", root_ref=root_ref, material_refs=refs)
+            # Differences the backend accepted during read-back are the
+            # operator's to judge, so they travel back with the result.
+            found = list(await self.io.read_back_findings())
+            if found:
+                journal.record("readback_findings", findings=found)
             return {"kind": "import_tree", "identity": "/".join(root_ref), "editor_open": False,
                     "nodes": reporter.completed, "total": reporter.total,
-                    "warnings": warnings, "merges": request.merges, "skipped": list(self.skipped),
+                    "warnings": warnings + found, "merges": request.merges,
+                    "skipped": list(self.skipped),
                     "note": "Draft tree saved and verified through Search / View. No Send/Submit. Journal: " + str(journal.path)}
         except BaseException as exc:
             stopped = isinstance(exc, ImportStopped)

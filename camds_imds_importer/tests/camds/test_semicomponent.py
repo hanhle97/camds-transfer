@@ -219,6 +219,9 @@ class SemiRecorder:
     async def verify_substance(self, path, node, at=(0, 1)):
         pass
 
+    async def read_back_findings(self):
+        return []
+
     async def verify_proportion(self, node, what="Substance"):
         self.portions.append(("verify", what, node["name"]))
 

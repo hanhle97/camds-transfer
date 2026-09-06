@@ -123,6 +123,9 @@ class ApplicationBrowser:
     async def add_substance(self, name, node):
         return node["name"]
 
+    async def read_back_findings(self):
+        return []
+
     async def open_saved(self, kind, ref):
         self.ref = ref
 

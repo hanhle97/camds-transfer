@@ -344,6 +344,10 @@ class CamdsTab(QWidget):
             self.session_changed.emit(self.session)
         if result["kind"] == "import_tree":
             self.import_status.setText(f"Import complete: {result.get('nodes', 0)} / {result.get('total', 0)} steps verified.")
+            # An import that CAMDS accepted can still hold differences the
+            # operator has to see; a completed run must not bury them.
+            for finding in (result.get("warnings") or []) + (result.get("skipped") or []):
+                self.log_message.emit("Reported: " + finding)
         self.save_button.setEnabled(self.editor_open)
         if result["kind"] == "search":
             self.results.setColumnCount(len(result["columns"]))

@@ -27,6 +27,9 @@ def deeper_tree():
 
 
 class FakeDraftBrowser:
+
+    async def read_back_findings(self):
+        return []
     def __init__(self, on_save=None, fail_create=None):
         self.calls = []
         self.saves = 0

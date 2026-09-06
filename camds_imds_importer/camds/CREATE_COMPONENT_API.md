@@ -158,6 +158,7 @@ An attached Substance record holds `csubId`, `ccasCode`, `cenName`, `cname`
 | GET | `/api/mds/tree/getMaterialStatus/{mdsId}` | — | Announce a Material before reading it |
 | POST | `/api/mds/tree/loadMdsTree` | `mdsId` | **The whole saved tree** |
 | POST | `/api/mds/tree/canbeModifyMx` | `mdsId` | Announce a referenced MDS before reading its node |
+| POST | `/api/mds/tree/isStandMaterial` | `mdsId` | Asked between a referenced Material and its substances |
 
 **Opening a saved MDS has an order.** The status call comes first, then the
 tree, then its nodes:
@@ -172,6 +173,29 @@ POST /api/mds/tree/loadNodeDate?strutsId=CA_21_612736349
 that tree then fails with the generic `程序异常`. A node that references another
 MDS is announced the same way, with `canbeModifyMx` for the referenced id, before
 `loadNodeDate` is issued for it.
+
+### A referenced node has two ids — verified 2026-09-06
+
+`loadMdsTree` returns a referenced node under a **prefixed** tree id, and marks
+it with `crefFlag: "1"` / `rf: true`. Every call addresses it by the bare id:
+
+```
+tree:  {"id": "ref1_-CA_21_612736365", "mdsId": "CA_8_34231714",
+        "nodeType": 3, "crefFlag": "1", "rf": true, "text": "Aluminium Wire"}
+
+POST /api/mds/tree/canbeModifyMx?mdsId=CA_8_34231714
+POST /api/mds/tree/loadNodeDate?strutsId=CA_21_612736365     <- no prefix
+POST /api/mds/tree/isStandMaterial?mdsId=CA_8_34231714
+POST /api/mds/tree/loadNodeDate?strutsId=CA_21_486310709     <- its substances
+```
+
+Posting the prefixed id is refused with `程序异常`; this ended the first live
+component read-back on 2026-09-06 (journal
+`1e22d764…jsonl`, `interrupted_or_failed`). `crefFlag` marks a referenced
+**Component** as well as a Material (`ref1_-CA_21_594394588`, `nodeType: 1`,
+`mdsId: CA_5_121370260`), so the flag decides, not the node type. Recorded in
+`79e2e514-search_component.har`; replayed by
+`tests/camds/test_recorded_payloads.py`.
 
 Both searches post the same form; `name` and `symbol` are the criteria:
 

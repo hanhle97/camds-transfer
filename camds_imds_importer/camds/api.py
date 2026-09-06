@@ -20,6 +20,7 @@ The write pattern CAMDS itself uses is load, mutate, post back:
 from __future__ import annotations
 
 import inspect
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -56,6 +57,18 @@ REL_RECYCLATE = "recycledmaterials"
 # things differently. Mixing them up silently reads every field as missing.
 SEARCH_ID, SEARCH_CAS, SEARCH_NAME = "csid", "cas", "enName"
 NODE_ID, NODE_CAS, NODE_NAME = "csubId", "ccasCode", "cenName"
+
+# A node that points at another MDS is returned under a prefixed tree id -
+# "ref1_-CA_21_612736365" - but every call addresses it by the bare id. Posting
+# the prefixed one is answered with a generic "程序异常".
+REFERENCED_ID = re.compile(r"^.*?(CA_21_\d+)$")
+
+
+def addressable(tree_id: str) -> str:
+    """The id `loadNodeDate` accepts, from the id `loadMdsTree` returns."""
+    found = REFERENCED_ID.match(tree_id or "")
+    return found.group(1) if found else tree_id
+
 
 # nodeType as CAMDS numbers it in structureVO.
 COMPONENT_NODE, SEMICOMPONENT_NODE, MATERIAL_NODE, SUBSTANCE_NODE = 1, 2, 3, 4
@@ -369,6 +382,10 @@ class CamdsApi:
     async def can_modify(self, mds_id: str) -> Any:
         """CAMDS asks this before it reads a referenced MDS node."""
         return await self._post("/api/mds/tree/canbeModifyMx", {"mdsId": mds_id})
+
+    async def is_standard_material(self, mds_id: str) -> Any:
+        """Asked after a referenced Material is read, before its substances are."""
+        return await self._post("/api/mds/tree/isStandMaterial", {"mdsId": mds_id})
 
     async def material_status(self, mds_id: str) -> Any:
         return await self._get(f"/api/mds/tree/getMaterialStatus/{mds_id}")

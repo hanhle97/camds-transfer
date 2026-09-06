@@ -21,6 +21,7 @@ class FakeCamds:
         self.counter = 0
         self.nodes = {}          # strutsId -> {"data":…, "structureVO":…, "treeDataNode":…}
         self.children = {}       # strutsId -> [strutsId]
+        self.referenced = set()  # strutsIds that point at another MDS
         self.saves = []
         self.applied = []
         self.calls = []
@@ -82,8 +83,13 @@ class FakeCamds:
             sid = self._new("REF", 3, text="Steel")
             self.nodes[sid]["data"]["cname"] = "Steel"
             self.nodes[sid]["treeDataNode"].update(mdsId=params["mdsId"], mdsCver=0.01)
+            self.referenced.add(sid)
             return self._attach(params["parentStrutsId"], sid)
         if url.endswith("loadNodeDate"):
+            # CAMDS returns a referenced node under a prefixed tree id but only
+            # ever accepts the bare one; the prefixed id is refused.
+            if params["strutsId"] not in self.nodes:
+                raise AssertionError(f"loadNodeDate refused {params['strutsId']}")
             return dict(self.nodes[params["strutsId"]])
         if url.endswith("editNodeDate"):
             sid = body["editedStructId"]
@@ -122,7 +128,11 @@ class FakeCamds:
         return {"treeDataNode": node["treeDataNode"]} if False else node["treeDataNode"]
 
     def _tree(self, sid):
+        """As loadMdsTree answers: a referenced node under a "ref1_-" id."""
         node = dict(self.nodes[sid]["treeDataNode"])
+        if sid in self.referenced:
+            node["id"] = "ref1_-" + sid
+            node["crefFlag"], node["rf"] = "1", True
         node["children"] = [self._tree(child) for child in self.children[sid]]
         return node
 

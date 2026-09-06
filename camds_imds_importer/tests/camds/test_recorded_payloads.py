@@ -194,3 +194,79 @@ async def test_a_relation_write_matches_the_recorded_one(case):
     differing = {k: (theirs.get(k), mine.get(k)) for k in set(theirs) | set(mine)
                  if theirs.get(k) != mine.get(k)}
     assert not differing, f"structureVO differs: {differing}"
+
+
+SAVED_TREE = CASES["saved component tree with a referenced material"]
+
+
+class RecordingApi:
+    """Every call CAMDS receives, in order, answered as the recording does."""
+
+    def __init__(self, tree):
+        self.tree = tree
+        self.calls = []
+
+    async def mds_status(self, mds_id):
+        self.calls.append(("mds_status", mds_id))
+
+    async def material_status(self, mds_id):
+        self.calls.append(("material_status", mds_id))
+
+    async def load_tree(self, mds_id):
+        self.calls.append(("load_tree", mds_id))
+        return self.tree
+
+    async def can_modify(self, mds_id):
+        self.calls.append(("can_modify", mds_id))
+
+    async def is_standard_material(self, mds_id):
+        self.calls.append(("is_standard_material", mds_id))
+
+    async def load_view(self, struts_id):
+        self.calls.append(("load_view", struts_id))
+        return {"data": {}, "structureVO": {}, "treeDataNode": {}}
+
+
+async def test_a_referenced_node_is_addressed_without_its_tree_prefix():
+    """loadMdsTree returns "ref1_-CA_21_612736365"; every call takes the bare id.
+
+    Posting the prefixed one is answered with a generic "程序异常", which is what
+    ended the first component read-back.
+    """
+    from camds_imds_importer.camds.api_backend import ApiBackend
+
+    api = RecordingApi(SAVED_TREE["response"])
+    backend = ApiBackend(api)
+    await backend.open_saved("Component", (SAVED_TREE["mds_id"], "0.01"))
+    await backend.select(("METAL-FILM RESISTOR", "Aluminium alloys", "Aluminium Wire"))
+
+    loaded = [sid for name, sid in api.calls if name == "load_view"]
+    assert all(not sid.startswith("ref") for sid in loaded), loaded
+    assert "CA_21_612736365" in loaded
+
+
+async def test_reading_a_referenced_material_asks_what_the_browser_asks():
+    """canbeModifyMx before the node, isStandMaterial before its substances."""
+    from camds_imds_importer.camds.api_backend import ApiBackend
+
+    api = RecordingApi(SAVED_TREE["response"])
+    backend = ApiBackend(api)
+    await backend.open_saved("Component", (SAVED_TREE["mds_id"], "0.01"))
+    await backend.select(("METAL-FILM RESISTOR", "Aluminium alloys", "Aluminium Wire"))
+
+    assert api.calls[:2] == [("mds_status", "CA_5_124767559"),
+                             ("load_tree", "CA_5_124767559")]
+    assert api.calls[-3:] == [("can_modify", "CA_8_34231714"),
+                              ("load_view", "CA_21_612736365"),
+                              ("is_standard_material", "CA_8_34231714")]
+
+
+async def test_an_unreferenced_node_is_not_asked_about():
+    """A node the MDS owns needs neither call; sending them is noise."""
+    from camds_imds_importer.camds.api_backend import ApiBackend
+
+    api = RecordingApi(SAVED_TREE["response"])
+    backend = ApiBackend(api)
+    await backend.open_saved("Component", (SAVED_TREE["mds_id"], "0.01"))
+    await backend.select(("METAL-FILM RESISTOR", "Aluminium alloys"))
+    assert ("can_modify", "CA_5_124767560") not in api.calls

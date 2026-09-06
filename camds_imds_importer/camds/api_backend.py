@@ -22,7 +22,7 @@ from __future__ import annotations
 from .api import (CLASSIFICATION, FIXED, FROM_TO, MASS_PER_ITEM, MATERIAL_NODE, NAME,
                   NODE_CAS, NODE_NAME,
                   NUMBER, REL_MASS, REL_MASS_UNIT, REL_QUANTITY, REST, SEARCH_CAS, SEARCH_ID,
-                  SEARCH_NAME, WEIGHT_UNIT, CamdsApiError, portion)
+                  SEARCH_NAME, WEIGHT_UNIT, CamdsApiError, addressable, portion)
 from .import_plan import proportion, real_cas
 from .material_classifications import classification_code
 
@@ -77,8 +77,9 @@ class ApiBackend:
         self._material: tuple[str, str, str] | None = None
         self._substances: dict[str, str] = {}
         # Nodes that point at another MDS; CAMDS is asked about one before it
-        # will serve that node.
+        # will serve that node, and about a Material again before its substances.
         self._referenced: dict[str, str] = {}
+        self._kind: dict[str, int | None] = {}   # strutsId -> nodeType
 
     # ------------------------------------------------------------- bookkeeping
     def _remember(self, path: tuple, struts_id: str) -> None:
@@ -104,23 +105,36 @@ class ApiBackend:
         return len(self._children.get(parent_struts_id, []))
 
     def _map_tree(self, node: dict, path: tuple = ()) -> None:
-        """Index a tree returned by loadMdsTree so paths resolve again."""
+        """Index a tree returned by loadMdsTree so paths resolve again.
+
+        A node that points at another MDS arrives under a prefixed id, so the
+        addressable one is what is indexed; `crefFlag` marks it, and it marks a
+        referenced Component as well as a referenced Material.
+        """
         here = path + (node.get("text") or "",)
-        self._remember(here, node["id"])
-        self._children[node["id"]] = [child["id"] for child in node.get("children") or []]
+        struts_id = addressable(node["id"])
+        self._remember(here, struts_id)
+        self._children[struts_id] = [addressable(child["id"])
+                                     for child in node.get("children") or []]
+        self._kind[struts_id] = node.get("nodeType")
         if node.get("cmatClsId"):
-            self._classification[node["id"]] = node["cmatClsId"]
-        if node.get("nodeType") == MATERIAL_NODE and node.get("mdsId"):
-            self._referenced[node["id"]] = node["mdsId"]
+            self._classification[struts_id] = node["cmatClsId"]
+        if (node.get("rf") or str(node.get("crefFlag") or "") == "1") and node.get("mdsId"):
+            self._referenced[struts_id] = node["mdsId"]
         for child in node.get("children") or []:
             self._map_tree(child, here)
 
     async def _load(self, struts_id: str) -> dict:
+        """Read one node, asking what CAMDS asks before it will serve it."""
         referenced = self._referenced.get(struts_id)
         if referenced:
             await self.api.can_modify(referenced)
         self.current = struts_id
         self.view = await self.api.load_view(struts_id)
+        if referenced and self._kind.get(struts_id) == MATERIAL_NODE:
+            # The browser asks this between a referenced Material and its
+            # substances; without it their reads are refused.
+            await self.api.is_standard_material(referenced)
         return self.view
 
     # ------------------------------------------------------------------ create
@@ -165,6 +179,7 @@ class ApiBackend:
         if on_allocated:
             on_allocated(created.reference)
         self._paths, self._children = {}, {}
+        self._kind, self._referenced = {}, {}
         self._remember((node["name"],), created.struts_id)
         await self.api.set_fields(created.struts_id, fields)
         await self._load(created.struts_id)
@@ -273,9 +288,9 @@ class ApiBackend:
         tree = await self.api.load_tree(ref[0])
         self.root = type(self.root).from_payload(tree) if self.root else None
         self._paths, self._children, self._classification = {}, {}, {}
-        self._referenced = {}
+        self._referenced, self._kind = {}, {}
         self._map_tree(tree)
-        await self._load(tree["id"])
+        await self._load(addressable(tree["id"]))
 
     async def select(self, path, at=(0, 1)) -> None:
         await self._load(self._resolve(path, at))

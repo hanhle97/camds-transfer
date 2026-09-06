@@ -66,11 +66,15 @@ def number(value) -> str:
 
 
 class ApiBackend:
-    def __init__(self, api, substances=None) -> None:
+    def __init__(self, api, substances=None, first_row_when_unclear=True) -> None:
         self.api = api
         # Choices a person has already made, and the ones this run ran into.
         self.substances = substances if substances is not None else SubstanceMapping()
         self.pending: list[tuple[dict, list]] = []
+        # When the catalogue does not identify one substance, take the first row
+        # it offers instead of stopping. Set by instruction; every use is
+        # recorded with the rows it chose between and reported with the run.
+        self.first_row_when_unclear = first_row_when_unclear
         self.reporter = None
         self.root = None                 # TreeNode of the tree being built or read
         self.current: str | None = None  # strutsId the importer last selected
@@ -354,6 +358,17 @@ class ApiBackend:
             raise CamdsApiError(
                 f"{node['name']}: the recorded choice {chosen} is no longer one of the "
                 f"{len(rows)} row(s) CAMDS offers. " + _offered(rows))
+        if self.first_row_when_unclear and rows:
+            # By instruction: take the first row CAMDS offers rather than stop.
+            # Recorded and reported on every use - the choice is the software's,
+            # so it must never be mistaken for one a person made.
+            picked = (hits or rows)[0]
+            self.substances.auto(node, picked, rows)
+            self.findings.append(
+                f"{node['name']}: {criterion} did not identify one substance, so the first of "
+                f"{len(hits) or len(rows)} row(s) CAMDS offered was used - "
+                f"{picked.get(SEARCH_NAME)!r} (id {picked.get(SEARCH_ID)}). " + _offered(rows))
+            return picked
         self.pending.append((node, rows))
         raise CamdsApiError(
             f"{node['name']}: searching the CAMDS substance catalogue by {criterion} "
@@ -434,10 +449,15 @@ class ApiBackend:
 
         CAMDS may label a substance in either language once saved, so the stable
         CAS decides; a system group has none and is matched on its English name.
+
+        That name is the catalogue's, not the report's - `path[-1]` is what
+        attaching returned. They differ whenever the catalogue holds the
+        substance under another name, and comparing the report's name would
+        then look for something that was never written.
         """
         cas = real_cas(node)
         parent = self._resolve(path[:-1])
-        wanted = str(node["name"]).strip().casefold()
+        wanted = str(path[-1]).strip().casefold()
         for candidate in self._children.get(parent, []):
             record = (await self._load(candidate)).get("data") or {}
             if cas:

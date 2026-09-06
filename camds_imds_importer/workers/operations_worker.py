@@ -150,21 +150,26 @@ class OperationsWorker(QThread):
                 await backend.resolve_substance(node)
             except CamdsApiError as exc:
                 unresolved.append(str(exc))
+        # Write the questions next to the rows CAMDS offered, so a choice is
+        # made against the evidence rather than from a log line.
+        for node, rows in backend.pending:
+            backend.substances.ask(node, rows)
+        picked = await backend.read_back_findings()
         note = (f"Checked {len(nodes)} distinct substance lookup(s) for "
                 f"{len(request.materials())} Material(s). Nothing was created. ")
-        if not unresolved:
+        if not unresolved and not picked:
             note += "Every one resolved to exactly one CAMDS entry."
         else:
-            # Write the questions next to the rows CAMDS offered, so the choice
-            # is made against the evidence rather than from a log line.
-            for node, rows in backend.pending:
-                backend.substances.ask(node, rows)
-            backend.substances.save()
-            note += (f"{len(unresolved)} did not resolve and would stop an import. "
-                     f"Each is written to {backend.substances.path} with the rows CAMDS "
-                     "offered; fill in \"csid\" for the intended one.")
+            if picked:
+                note += (f"{len(picked)} did not identify one substance and the first row "
+                         f"CAMDS offered was taken; review them in {backend.substances.path} "
+                         "(\"source\": \"first-row\"). ")
+            if unresolved:
+                note += (f"{len(unresolved)} could not be resolved at all and would stop an "
+                         f"import; they are written to {backend.substances.path} with a null "
+                         "\"csid\".")
         return {"kind": "check_substances", "identity": "", "editor_open": False,
-                "note": note, "warnings": unresolved[:MAX_REPORTED_ERRORS],
+                "note": note, "warnings": (picked + unresolved)[:MAX_REPORTED_ERRORS],
                 "skipped": []}
 
     async def _note_session(self, context, status, authenticated: bool) -> bool:

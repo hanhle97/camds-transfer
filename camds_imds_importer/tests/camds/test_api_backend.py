@@ -153,8 +153,19 @@ def _ok(data):
     return Response
 
 
-def backend(camds):
-    return ApiBackend(CamdsApi(camds, base_url="https://camds.test"))
+def backend(camds, first_row=True):
+    """A backend whose substance choices go to a throwaway file.
+
+    The default SubstanceMapping writes to config/, which a test must never
+    touch: a recorded choice would leak from one run into the repository.
+    """
+    import pathlib
+    import tempfile
+    from camds_imds_importer.camds.substance_mapping import SubstanceMapping
+
+    mapping = SubstanceMapping(pathlib.Path(tempfile.mkdtemp()) / "substances.json")
+    return ApiBackend(CamdsApi(camds, base_url="https://camds.test"), mapping,
+                      first_row_when_unclear=first_row)
 
 
 def substance(uid="s", cas="7439-89-6", name="Iron", **extra):
@@ -380,21 +391,36 @@ async def test_an_id_is_journalled_before_the_node_is_filled(tmp_path):
                for e in resumed), resumed
 
 
-async def test_an_unresolvable_substance_names_what_the_catalogue_offered(tmp_path):
-    """A Material missing part of itself is wrong data, so this stops the run."""
+def _vmq():
     camds = FakeCamds(substances=[
         {"csid": "77", "cas": "63148-57-2", "enName": "VMQ (vinyl methyl silicone)"},
         {"csid": "78", "cas": None, "enName": "Silicone rubber"},
     ])
-    root = material(children=[substance(cas=None, name="VMQ", percentage=None,
-                                        percentage_min=10.0, percentage_max=13.0)])
+    return camds, material(children=[substance(cas=None, name="VMQ", percentage=None,
+                                               percentage_min=10.0, percentage_max=13.0)])
+
+
+async def test_an_unresolvable_substance_names_what_the_catalogue_offered(tmp_path):
+    """With the first-row instruction off, a Material missing part of itself is
+    wrong data and the run stops, naming the near misses."""
+    camds, root = _vmq()
     with pytest.raises(CamdsApiError) as failure:
-        await TreeImporter(backend(camds), tmp_path).run(ImportRequest(root))
+        await TreeImporter(backend(camds, first_row=False), tmp_path).run(ImportRequest(root))
     message = str(failure.value)
     assert "matched 0 entries exactly" in message
     # The near misses are named, so a naming difference is visible at a glance.
     assert "VMQ (vinyl methyl silicone)" in message and "63148-57-2" in message
     assert "id 77" in message
+
+
+async def test_the_first_row_instruction_carries_the_import_and_reports_the_pick(tmp_path):
+    """By instruction the run continues. What it chose reaches the operator with
+    the result, because nobody approved it."""
+    camds, root = _vmq()
+    result = await TreeImporter(backend(camds), tmp_path).run(ImportRequest(root))
+    picked = [w for w in result["warnings"] if "VMQ" in w]
+    assert picked, result["warnings"]
+    assert "VMQ (vinyl methyl silicone)" in picked[0] and "id 77" in picked[0]
 
 
 async def test_an_empty_catalogue_answer_says_so_plainly(tmp_path):

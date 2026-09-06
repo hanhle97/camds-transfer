@@ -36,3 +36,18 @@ class RowParserTests(unittest.TestCase):
         self.assertEqual(row.weight_g, 17.5)
         self.assertIsNone(row.percentage)
         self.assertEqual(row.classification, "5.3: Elastomers")
+
+
+def test_wrapped_hyphen_is_rejoined_without_eating_characters():
+    """A backreference typo here silently mangled every chemical name."""
+    from camds_imds_importer.parser.row_parser import _clean
+    assert _clean("Polyurethan and PE- lubricant") == "Polyurethan and PE-lubricant"
+    assert _clean("alpha- hydro-omega-((1-oxo-2-propen-1- yl)oxy)-") == \
+        "alpha-hydro-omega-((1-oxo-2-propen-1-yl)oxy)-"
+    # A hyphen standing on its own is a separator, not a wrapped word.
+    assert _clean("8(e) - Lead in high melting") == "8(e) - Lead in high melting"
+    assert _clean("1,4-Benzenedicarboxylic acid") == "1,4-Benzenedicarboxylic acid"
+    # Nothing may be lost: rejoining only removes the spaces after the hyphen.
+    for text in ("lead- based", "1,4- Benzene", "PE- lubricant"):
+        assert len(_clean(text)) == len(text) - 1
+        assert all(char.isprintable() for char in _clean(text))

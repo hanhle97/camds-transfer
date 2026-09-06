@@ -23,7 +23,7 @@ async def page():
     CreateRequest("Component", "x", weight_g="nan"),
     CreateRequest("Component", "x", weight_g="-1"),
     CreateRequest("Component", "x", weight_g=""),
-    CreateRequest("Material", "x", classification="5.1.a"),
+    CreateRequest("Material", "x", classification="8.4"),
     CreateRequest("Substance", "x"), CreateRequest("Semicomponent", ""),
     CreateRequest("Semicomponent", "x", number="x" * 51),
 ])
@@ -120,7 +120,7 @@ async def test_invalid_create_does_not_allocate_id(page):
     await page.set_content('<button onclick="window.allocated=true">Create</button>')
     ops = CamdsOperations(page)
     with pytest.raises(ValueError):
-        await ops.create(CreateRequest("Material", "Bad", classification="5.1.a"))
+        await ops.create(CreateRequest("Material", "Bad", classification="8.4"))
     assert not ops.editor_open
     assert await page.evaluate("Boolean(window.allocated)") is False
 

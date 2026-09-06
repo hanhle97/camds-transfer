@@ -178,7 +178,9 @@ def _page_regions(page: Any, page_number: int) -> list[RawRegion]:
 
 def _region_to_node(region: RawRegion) -> MDSNode:
     class_flags = region.value("class_flags")
-    class_match = re.match(r"(?P<class>\d+(?:\.\d+)+\s*:\s*.*?)(?=\s+(?:D|P|SVHC)(?:\s|$)|$)", class_flags)
+    # CAMDS publishes letter-suffixed classifications such as 5.1.a and 5.1.b;
+    # without the suffix the code fell through into the GADSL flags column.
+    class_match = re.match(r"(?P<class>\d+(?:\.\d+)+(?:\.[A-Za-z])?\s*:\s*.*?)(?=\s+(?:D|P|SVHC)(?:\s|$)|$)", class_flags)
     classification = class_match.group("class") if class_match else ""
     flags = class_flags[len(classification):].strip() if classification else class_flags
     columns = ColumnText(

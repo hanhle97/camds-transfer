@@ -109,5 +109,62 @@
       "Reload draft and read back hierarchy, Quantity, Mass and Proportion",
       "Check validation errors, ID/version and any Save dialog"
     ]
+  },
+  "add_semicomponent": {
+    "button": "img[title=\"Add SemiComponent\"]",
+    "alt": "添加半成品部件",
+    "behavior": "Inserts and selects a new Semicomponent under the selected Component; no reference dialog",
+    "type_guard": "Details \"Type\" must read Semicomponent before filling; stale previous-node details linger briefly",
+    "name": ".el-form-item:has(> .el-form-item__label:text-is(\"Article Name\")) input",
+    "number": ".el-form-item:has(> .el-form-item__label:text-is(\"Semicomponent No.\")) input",
+    "mass": ".el-form-item:has(> .el-form-item__label:text-is(\"Mass\")) input",
+    "mass_units": [
+      "mg",
+      "g",
+      "kg"
+    ],
+    "quantity": "Not present for a Semicomponent under a Component",
+    "scope": "Details tabpanel",
+    "evidence": "SEMICOMPONENT_APPLICATION_DISCOVERY.md 2026-09-06; UI verified, Save/readback persistence untested",
+    "nested_semicomponent": "Offered on the toolbar but never exercised; refused by preflight"
+  },
+  "application": {
+    "location": "Material tab with per-substance rows, not a Component field",
+    "visibility": "Conditional; the Iron test Material had only Details",
+    "tab": {
+      "role": "tab",
+      "name": "Application",
+      "exact": true
+    },
+    "panel": {
+      "role": "tabpanel",
+      "name": "Application",
+      "exact": true
+    },
+    "row": "Match on the exact English Name cell; no CAS column is shown",
+    "cell": "td > div.cell > span > font[color=\"blue\"], initially \"none\"",
+    "dialog": "prohibited substance application standard",
+    "option": "label.el-radio:has(input[value=\"N\"])",
+    "buttons": [
+      "Cancel",
+      "Confirm"
+    ],
+    "status": "NOT IMPLEMENTED",
+    "blocker": "CAMDS option values are not IMDS application ids and no mapping has been verified; Confirm was never exercised, so the save path is unproven. A checked default is not proof of an applied Application.",
+    "evidence": "SEMICOMPONENT_APPLICATION_DISCOVERY.md 2026-09-06"
+  },
+  "material_under_semicomponent": {
+    "button": "img[title=\"Add Metarial\"]",
+    "behavior": "Same reference search dialog as under a Component",
+    "quantity_field": "Proportion, NOT Mass",
+    "radios": {
+      "range": "label.el-radio:has(input[value=\"1\"])",
+      "fixed": "label.el-radio:has(input[value=\"2\"])",
+      "rest": "label.el-radio:has(input[value=\"3\"])"
+    },
+    "numeric": "input[type=\"text\"] scoped inside the chosen wrapper",
+    "checked": "aria-checked on the wrapper",
+    "rule": "Pick the relation input by parent type: Component uses Mass, Semicomponent uses Proportion",
+    "evidence": "SEMICOMPONENT_APPLICATION_DISCOVERY.md follow-up 2026-09-06; no Save was clicked"
   }
 }

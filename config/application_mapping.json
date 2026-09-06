@@ -1,0 +1,13 @@
+{
+  "note": "Reviewed IMDS to CAMDS application mappings. CAMDS option codes are not IMDS codes; each entry pairs the wording seen in both systems.",
+  "entries": {
+    "iron|notapplicable": {
+      "substance": "Iron",
+      "imds_application": "Not applicable [34]",
+      "camds_value": "39",
+      "camds_label": "Not applicable",
+      "source": "exact-name-match",
+      "recorded_at": "2026-09-06T13:17:52.137250+00:00"
+    }
+  }
+}

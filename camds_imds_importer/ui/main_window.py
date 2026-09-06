@@ -15,7 +15,8 @@ from PySide6.QtWidgets import (
 from ..camds.browser import BrowserConfig, CamdsBrowser
 from ..camds.login import LoginStatus
 from ..core.credentials import CredentialManager, Credentials
-from ..core.progress import ImportProgress
+from ..camds.import_control import brief
+from ..core.progress import ImportProgress, ImportStage
 from ..core.state_machine import AppState, ApplicationStateMachine
 from ..parser.models import MDSDocument
 from ..workers.camds_worker import CamdsLoginWorker
@@ -62,6 +63,7 @@ class MainWindow(QMainWindow):
         self._active_login_worker: CamdsLoginWorker | None = None
         self._parse_started_at: float | None = None
         self._selected_page_count: int = 0
+        self._pending_login: Credentials | None = None
         self._build_ui()
         self._build_menu()
         self.state_machine.state_changed.connect(self._apply_state)
@@ -115,6 +117,10 @@ class MainWindow(QMainWindow):
         self.camds_tab = CamdsTab()
         self.camds_tab.log_message.connect(lambda message: self.logs_tab.append("CAMDS", message))
         self.camds_tab.operation_status.connect(self._camds_operation_status)
+        self.camds_tab.node_progress.connect(self._camds_node_progress)
+        self.camds_tab.session_changed.connect(self._camds_session_changed)
+        self.camds_tab.login_required.connect(self.login_from_menu)
+        self.camds_tab.session_ready.connect(self._camds_session_ready)
         for title, widget in (("Overview", self.overview_tab), ("MDS Tree", self.tree_tab), ("Validation", self.validation_tab), ("CAMDS Mapping", self.mapping_tab), ("CAMDS Search / Create", self.camds_tab), ("Progress", self.progress_tab), ("Logs", self.logs_tab)):
             self.tabs.addTab(widget, title)
         root.addWidget(self.tabs)
@@ -123,6 +129,9 @@ class MainWindow(QMainWindow):
         self.parse_button.clicked.connect(self.start_parse)
         self.validate_button.clicked.connect(self.start_validation)
         self.start_button.clicked.connect(self._import_not_available)
+        self.pause_button.clicked.connect(self.camds_tab.pause_import)
+        self.resume_button.clicked.connect(self.camds_tab.resume_import)
+        self.stop_button.clicked.connect(self.camds_tab.stop_import)
         self.mode.currentTextChanged.connect(self.overview_tab.set_mode)
         self.mode.currentTextChanged.connect(lambda _: self._apply_state(self.state_machine.state.value))
         self.overview_tab.set_mode(self.mode.currentText())
@@ -149,6 +158,58 @@ class MainWindow(QMainWindow):
             "CAMDS Import",
             "Parsed data is available in the MDS Tree. Use DRY_RUN for a local plan, or CAMDS Search / Create to search and prepare one unsaved root.",
         )
+
+    def _camds_node_progress(self, event) -> None:
+        """One import step drives every workflow indicator at once."""
+        self.progress_tab.set_node_progress(event)
+        self.progress.stage = ImportStage.CAMDS_IMPORTING
+        self.progress.completed_nodes = event.completed
+        self.progress.total_nodes = event.total
+        self.progress.current_node_uid = event.uid
+        self.progress.current_node_name = event.name
+        self.progress.elapsed_seconds = event.elapsed_seconds
+        self.stage_label.setText("Current stage: " + event.message)
+        self.node_label.setText(f"Current node: {event.counter} — {event.name or '-'} (under {event.parent_path})")
+        if event.total:
+            self._set_overall(int(round(100 * event.completed / event.total)))
+        if event.event == "paused":
+            self.status_label.setText("● Status: Paused between steps")
+            if self.state_machine.state == AppState.IMPORTING:
+                self.state_machine.transition(AppState.PAUSED)
+        elif event.event in ("node_failed", "stopped"):
+            self.progress.errors += 1
+            self.logs_tab.append("ERROR", f"{event.kind or 'node'} {event.name or '-'}: {event.message}")
+        elif self.state_machine.state == AppState.PAUSED:
+            self.state_machine.transition(AppState.IMPORTING)
+        self.progress_tab.update_progress(self.progress)
+
+    def _camds_session_changed(self, status: str) -> None:
+        """Connection, status, stage and progress always describe the same browser."""
+        if status == "AUTHENTICATED":
+            self.authenticated = True
+            self.connection_label.setText("✓ CAMDS: Logged in (operations session)")
+            self.overview_tab.set_connection("Authenticated", self.credentials.get_username() or "-")
+            self._set_stage("CAMDS_AUTHENTICATED")
+            self.progress.stage = ImportStage.CAMDS_AUTHENTICATED
+            self.progress_tab.update_progress(self.progress)
+            if AppState.CAMDS_AUTHENTICATED in self._allowed_states():
+                self.state_machine.transition(AppState.CAMDS_AUTHENTICATED)
+            self.logs_tab.append("CAMDS", "Operations browser is authenticated")
+        elif status in ("EXPIRED", "LOGIN_REQUIRED"):
+            self.authenticated = False
+            self.connection_label.setText("⚠ CAMDS: Session expired" if status == "EXPIRED" else "⚠ CAMDS: Not connected")
+            self.overview_tab.set_connection("Not connected", "-")
+            self._set_stage("CAMDS_LOGIN_REQUIRED")
+            if AppState.CAMDS_LOGIN_REQUIRED in self._allowed_states():
+                self.state_machine.transition(AppState.CAMDS_LOGIN_REQUIRED)
+        else:
+            self.authenticated = False
+            self.connection_label.setText("● CAMDS: Not connected")
+
+    def _camds_session_ready(self) -> None:
+        credentials, self._pending_login = self._pending_login, None
+        if credentials:
+            self.camds_tab.sign_in(credentials)
 
     def _camds_operation_status(self, message: str, complete: bool) -> None:
         self.stage_label.setText("Current stage: CAMDS operation complete" if complete else "Current stage: " + message)
@@ -267,12 +328,20 @@ class MainWindow(QMainWindow):
         dialog.exec()
 
     def login_from_menu(self) -> None:
+        """Sign in on the operations browser, never in a second throwaway session."""
         credentials = self.credentials.get_credentials()
         if not credentials:
             self.open_settings()
             credentials = self.credentials.get_credentials()
-        if credentials:
-            self.start_test_login(credentials)
+        if not credentials:
+            return
+        self.tabs.setCurrentWidget(self.camds_tab)
+        self._set_stage("CAMDS_LOGIN")
+        if self.camds_tab.worker is None:
+            self._pending_login = credentials
+            self.camds_tab.open_session()
+        else:
+            self.camds_tab.sign_in(credentials)
 
     def export_excel_data(self) -> None:
         if not self.document:
@@ -405,7 +474,8 @@ class MainWindow(QMainWindow):
         self.status_label.setText("✕ Status: Failed")
         if AppState.FAILED in self._allowed_states():
             self.state_machine.transition(AppState.FAILED)
-        QMessageBox.critical(self, "Operation failed", message)
+        # The dialog shows the reason; the Logs tab keeps the whole text.
+        QMessageBox.critical(self, "Operation failed", brief(message, lines=8, width=1200))
 
     def _allowed_states(self) -> set[AppState]:
         from ..core.state_machine import ALLOWED_TRANSITIONS
@@ -418,10 +488,16 @@ class MainWindow(QMainWindow):
         ready_data = self.document is not None and state in {AppState.READY, AppState.CAMDS_AUTHENTICATED}
         self.start_button.setEnabled(ready_data)
         self.start_button.setText("Review Create Root" if self.mode.currentText() == "CREATE_ROOT" else "Start Import")
-        self.pause_button.setEnabled(state == AppState.IMPORTING)
-        self.resume_button.setEnabled(state == AppState.PAUSED)
-        self.stop_button.setEnabled(state in {AppState.IMPORTING, AppState.PAUSED})
-        self.status_label.setText(f"● Status: {state.value.replace('_', ' ').title()}")
+        importing = self.camds_tab.importing
+        control = getattr(self.camds_tab.worker, "control", None)
+        self.pause_button.setEnabled(importing and control is not None and not control.paused)
+        self.resume_button.setEnabled(importing and control is not None and control.paused)
+        self.stop_button.setEnabled(importing and control is not None and not control.stopping)
+        # A paused import must stay visible; a later state change must not erase it.
+        if importing and control is not None and control.paused:
+            self.status_label.setText("● Status: Paused between steps")
+        else:
+            self.status_label.setText(f"● Status: {state.value.replace('_', ' ').title()}")
 
     def closeEvent(self, event) -> None:
         # Cancel Playwright on its own event loop before its QThread is destroyed.

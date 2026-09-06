@@ -55,6 +55,10 @@ class MDSNode:
     svhc: bool | None = None
     application_id: str | None = None
     application_text: str | None = None
+    # Marking statements and ELV exemption prose share the report's rightmost
+    # column with real applications but are different IMDS fields. Kept so the
+    # data is not lost, and reported as not transferred rather than blocking.
+    column_note: str | None = None
     source_page: int = 0
     source_text: str = ""
     children: list[MDSNode] = field(default_factory=list)

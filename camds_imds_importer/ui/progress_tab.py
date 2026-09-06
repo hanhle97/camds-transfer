@@ -18,7 +18,7 @@ class ProgressTab(QWidget):
         layout.addWidget(self.current)
         summary = QGroupBox("CAMDS Import Progress")
         form = QFormLayout(summary)
-        self.labels = {name: QLabel("-") for name in ("Stage", "Completed", "Components", "Materials", "Substances", "Warnings", "Errors", "Elapsed", "ETA", "Rate", "Current item", "CAMDS action")}
+        self.labels = {name: QLabel("-") for name in ("Stage", "Completed", "Components", "Materials", "Substances", "Warnings", "Errors", "Elapsed", "ETA", "Rate", "Current item", "CAMDS action", "Parent path", "Field", "Succeeded", "Failed")}
         for name, label in self.labels.items():
             form.addRow(f"{name}:", label)
         layout.addWidget(summary)
@@ -40,6 +40,22 @@ class ProgressTab(QWidget):
 
     def set_stage(self, stage: str) -> None:
         self.labels["Stage"].setText(stage.replace("_", " ").title())
+
+    def set_node_progress(self, event) -> None:
+        """Render one CAMDS import step: counter, path, field, outcome tallies."""
+        self.current.setMaximum(max(event.total, 1))
+        self.current.setValue(event.completed)
+        self.labels["Completed"].setText(event.counter)
+        self.labels["Current item"].setText(f"{event.kind or '-'}: {event.name or '-'}")
+        self.labels["Parent path"].setText(event.parent_path)
+        self.labels["Field"].setText(event.field_label or "-")
+        self.labels["Succeeded"].setText(str(event.succeeded))
+        self.labels["Failed"].setText(str(event.failed))
+        self.labels["Elapsed"].setText(f"{event.elapsed_seconds:.1f} s")
+        self.labels["ETA"].setText("-" if event.eta_seconds is None else f"~{event.eta_seconds:.0f}s remaining")
+        self.labels["CAMDS action"].setText(event.message)
+        if event.total:
+            self.set_overall(int(round(100 * event.completed / event.total)))
 
     def update_progress(self, progress: ImportProgress) -> None:
         self.labels["Completed"].setText(f"{progress.completed_nodes} / {progress.total_nodes}")

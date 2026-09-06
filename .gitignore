@@ -7,3 +7,11 @@ runtime/
 debug/
 tmp/
 output/
+
+# Supplier IMDS reports and anything exported from them: real customer data,
+# and inputs rather than source.
+*.pdf
+*.xlsx
+!camds_imds_importer/tests/**/*.pdf
+# Scratch pytest run directories
+.pytest-*/

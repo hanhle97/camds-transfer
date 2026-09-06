@@ -1,0 +1,196 @@
+"""Replay recorded CAMDS traffic through the client.
+
+Hand-written fakes reproduce what the author understood, so they cannot catch
+what the author misunderstood. Three defects reached production that way: an
+unawaited body, missing `Origin`/`Referer`, and a null `cindex` and
+`recycledmaterials` that CAMDS answers with a generic "程序异常".
+
+These cases come from `recorded/camds_payloads.json`, lifted from real sessions.
+The rule is simple: given what CAMDS answered, the client must send what the
+browser sent.
+"""
+import json
+from pathlib import Path
+
+import pytest
+
+from camds_imds_importer.camds.api import CamdsApi
+
+RECORDED = json.loads(
+    (Path(__file__).parent / "recorded" / "camds_payloads.json").read_text(encoding="utf-8"))
+CASES = {case["label"]: case for case in RECORDED["cases"]}
+
+
+class Replay:
+    """Answers loadNodeDate from the recording and captures what we send."""
+
+    def __init__(self, loaded):
+        self.loaded = loaded
+        self.sent = None
+
+    async def post(self, url, params=None, data=None, headers=None):
+        self.headers = headers
+        if url.endswith("/loadNodeDate"):
+            body = self.loaded
+        else:
+            self.sent = data
+            body = {"respCode": "0", "data": None, "ok": True}
+
+        class Response:
+            status = 200
+
+            @staticmethod
+            async def json():
+                return body
+        return Response
+
+
+@pytest.mark.parametrize("load_label, edit_label, change", [
+    ("material root load", "material root edit", {"cname": "Cu99"}),
+    ("component root load", "component root edit",
+     {"cname": "U557E MY26 PHEV BATTERY  ASM-. 12V Powernet", "csymbol": "044200509K",
+      "cmeaWeightPerItem": "3000"}),
+])
+async def test_the_client_sends_what_the_browser_sent(load_label, edit_label, change):
+    loaded, recorded = CASES[load_label], CASES[edit_label]
+    transport = Replay(loaded["response"])
+    api = CamdsApi(transport)
+    await api.set_fields(recorded["request"]["editedStructId"], change)
+
+    ours, theirs = transport.sent, recorded["request"]
+    assert set(ours) == set(theirs), "the request envelope must match"
+    assert ours["editedStructId"] == theirs["editedStructId"]
+    assert ours["parentId"] == theirs["parentId"]
+    assert ours["brotherSidList"] == theirs["brotherSidList"]
+    for section in ("data", "structureVO"):
+        mine = ours["view"].get(section) or {}
+        recorded_section = theirs["view"].get(section) or {}
+        assert set(mine) == set(recorded_section), f"view.{section} field names differ"
+        differing = {k: (recorded_section[k], mine[k]) for k in recorded_section
+                     if recorded_section[k] != mine[k]}
+        assert not differing, f"view.{section} values differ: {differing}"
+    for key in ("materialRecyclateVO", "mdsState", "refed", "state", "structState", "vocFlag"):
+        assert ours["view"][key] == theirs["view"][key], key
+
+
+async def test_a_material_write_never_carries_a_null_recyclate():
+    """CAMDS refuses it with a generic program exception."""
+    loaded = CASES["material root load"]["response"]
+    assert (loaded["data"]["structureVO"]["recycledmaterials"] is None
+            and loaded["data"]["structureVO"]["cindex"] is None), "the recording must still show the nulls"
+    transport = Replay(loaded)
+    await CamdsApi(transport).set_fields("CA_21_791936236", {"cname": "Cu99"})
+    relation = transport.sent["view"]["structureVO"]
+    assert relation["recycledmaterials"] is not None
+    assert relation["cindex"] is not None
+
+
+async def test_same_origin_headers_travel_with_every_write():
+    """Without them CAMDS answers a real path with HTTP 404."""
+    transport = Replay(CASES["material root load"]["response"])
+    await CamdsApi(transport).set_fields("CA_21_791936236", {"cname": "Cu99"})
+    assert transport.headers["Origin"] == "https://catarc.camds.org.cn"
+    assert transport.headers["Referer"] == "https://catarc.camds.org.cn/"
+
+
+@pytest.mark.parametrize("label", [c["label"] for c in RECORDED["cases"] if c["kind"] == "portion"])
+def test_recorded_portions_use_the_modes_the_client_writes(label):
+    from camds_imds_importer.camds.api import FIXED, FROM_TO, REST, portion
+    relation = CASES[label]["structureVO"]
+    mode = relation["crateType"]
+    assert mode in (FROM_TO, FIXED, REST)
+    if mode == FROM_TO:
+        expected = portion(FROM_TO, float(relation["cminRate"]), float(relation["cmaxRate"]))
+        assert float(relation["cminRate"]) == expected["cminRate"]
+    elif mode == FIXED:
+        assert portion(FIXED, relation["crate"])["crate"] == relation["crate"]
+    else:
+        assert portion(REST)["crate"] == 0
+
+
+def test_a_material_relation_always_carries_a_recyclate_and_a_position():
+    """The invariant the recordings show, stated once."""
+    for case in RECORDED["cases"]:
+        relation = (case.get("structureVO")
+                    or ((case.get("request") or {}).get("view") or {}).get("structureVO"))
+        if not relation or case["kind"] == "load":
+            continue
+        assert relation["cindex"] is not None, case["label"]
+        if relation.get("cnodeType") == 3:
+            assert relation["recycledmaterials"] is not None, case["label"]
+
+
+SEARCHES = [c for c in RECORDED["cases"] if c["kind"] == "substance_search"]
+
+
+@pytest.mark.parametrize("case", SEARCHES, ids=lambda c: c["label"])
+async def test_a_recorded_search_row_is_read_with_the_right_field_names(case):
+    """A search row is csid/cas/enName; a node record is csubId/ccasCode/cenName.
+    Reading one with the other's names makes every field silently missing."""
+    from camds_imds_importer.camds.api import SEARCH_CAS, SEARCH_ID, SEARCH_NAME
+
+    class Search:
+        async def post(self, url, params=None, data=None, headers=None):
+            class Response:
+                status = 200
+
+                @staticmethod
+                async def json():
+                    return case["response"]
+            return Response
+
+    rows = await CamdsApi(Search()).find_substance(name="x")
+    assert rows, "the recording holds at least one row"
+    for row in rows:
+        assert row.get(SEARCH_ID), f"no {SEARCH_ID} in {sorted(row)}"
+        assert row.get(SEARCH_NAME), f"no {SEARCH_NAME} in {sorted(row)}"
+        assert SEARCH_CAS in row
+
+
+async def test_a_stray_space_is_trimmed_before_searching():
+    """CAMDS does not trim: ' 7440-50-8' was recorded returning nothing."""
+    sent = {}
+
+    class Capture:
+        async def post(self, url, params=None, data=None, headers=None):
+            sent.update(data)
+
+            class Response:
+                status = 200
+
+                @staticmethod
+                async def json():
+                    return {"respCode": "0", "data": {"records": []}, "ok": True}
+            return Response
+
+    await CamdsApi(Capture()).find_substance(cas=" 7440-50-8 ", name="  ")
+    assert sent["cas"] == "7440-50-8" and sent["name"] == ""
+
+
+RELATIONS = [c for c in RECORDED["cases"] if c["kind"] == "relation"]
+
+
+@pytest.mark.parametrize("case", RELATIONS, ids=lambda c: c["label"])
+async def test_a_relation_write_matches_the_recorded_one(case):
+    """Mass and quantity travel as strings, and a child edit names its parent
+    and its siblings. Sending numbers, or omitting either, is answered with a
+    generic "程序异常"."""
+    recorded = case["request"]
+    relation = recorded["view"]["structureVO"]
+    change = ({"cweight": relation["cweight"], "cweightUnit": relation["cweightUnit"]}
+              if relation.get("cweight") is not None else {"cquantity": relation["cquantity"]})
+    # The values the browser sent are strings, not numbers.
+    assert all(isinstance(v, str) for v in change.values()), change
+
+    transport = Replay(case["loaded"])
+    await CamdsApi(transport).set_relation(
+        recorded["editedStructId"], change, parent_id=recorded["parentId"],
+        brothers=tuple(recorded["brotherSidList"]))
+
+    ours = transport.sent
+    assert ours["parentId"] == recorded["parentId"]
+    assert ours["brotherSidList"] == recorded["brotherSidList"]
+    mine, theirs = ours["view"]["structureVO"], relation
+    differing = {k: (theirs.get(k), mine.get(k)) for k in set(theirs) | set(mine)
+                 if theirs.get(k) != mine.get(k)}
+    assert not differing, f"structureVO differs: {differing}"

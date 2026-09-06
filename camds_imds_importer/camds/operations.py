@@ -3,11 +3,15 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from dataclasses import dataclass
 import asyncio
 
 from playwright.async_api import Page, Locator, expect
 
+from .material_classifications import classification_code, require_supported
+
+NAVIGATION_TIMEOUT_MS = int(os.getenv("CAMDS_NAVIGATION_TIMEOUT_MS", "180000"))
 BASE_URL = "https://catarc.camds.org.cn/"
 SEARCH_URL = BASE_URL + "#/seek/seekMaterialDataSheet"
 CREATE_URL = BASE_URL + "#/create/materialDataSheet"
@@ -58,8 +62,8 @@ class CreateRequest:
             raise ValueError("Name is required and must not exceed 100 characters")
         if len(self.number) > 50 or len(self.remark) > 2000:
             raise ValueError("Number must be at most 50 characters; remark at most 2000")
-        if self.kind == "Material" and self.classification != "1.1.1":
-            raise ValueError("Only Material classification 1.1.1 has been verified; other classifications are not yet supported")
+        if self.kind == "Material":
+            require_supported(self.classification)
         if self.kind != "Component" and self.weight_g:
             raise ValueError("Root mass is only supported for Component")
         if self.kind == "Component":
@@ -80,10 +84,12 @@ class CamdsOperations:
     async def _navigate(self, url: str) -> None:
         if self.editor_open or ("#/createComponent/" in self.page.url and "type=view" not in self.page.url):
             raise RuntimeError("An MDS editor is open. Review it in the browser, then close this session before starting another operation.")
+        # "commit" resolves once the response arrives; waiting for every
+        # synchronous script can exceed a minute on a high-latency CAMDS link.
         if self.page.url == url:
-            await self.page.reload(wait_until="domcontentloaded", timeout=60_000)
+            await self.page.reload(wait_until="commit", timeout=NAVIGATION_TIMEOUT_MS)
         else:
-            await self.page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+            await self.page.goto(url, wait_until="commit", timeout=NAVIGATION_TIMEOUT_MS)
         # Explicit page controls, not the generic authenticated shell, gate actions.
         try:
             if url == SEARCH_URL:
@@ -150,8 +156,10 @@ class CamdsOperations:
         await row.get_by_role("button", name="Create", exact=True).click()
         if request.kind == "Material":
             dialog = self.page.get_by_role("dialog", name="Creation of a new material", exact=True)
-            await dialog.get_by_role("cell", name=request.classification, exact=True).click()
+            # The wizard lists the bare code; reports carry "7.2: Ceramics / glass".
+            await dialog.get_by_role("cell", name=require_supported(request.classification), exact=True).click()
             await dialog.get_by_role("button", name="Next", exact=True).click()
+            await self._reject_symbol_step()
         details = self.page.get_by_role("tabpanel", name="Details", exact=True)
         await expect(form_item(details, "Type")).to_contain_text(request.kind, timeout=60_000)
         # The SPA initially renders a placeholder Component while fetching the root.
@@ -174,6 +182,50 @@ class CamdsOperations:
         await expect(remark).to_have_value(request.remark)
         return {"kind": "create", "identity": (await identity.inner_text()).strip(),
                 "note": "Root form filled and read back in the browser. NOT saved yet; review it, then use Save in the app to persist."}
+
+    async def _reject_symbol_step(self) -> None:
+        """Stop if the wizard asks for ISO 1043 symbols instead of opening the editor.
+
+        Polymer classifications add a second step that composes the material name
+        from Basic polymer / Fillers / Plasticizers / Flame retardant dropdowns.
+        Choosing those is a data decision that has not been discovered, and a
+        wrong symbol is wrong material data, so the run stops here.
+        """
+        details = self.page.get_by_role("tabpanel", name="Details", exact=True)
+        symbols = self.page.get_by_role("dialog").filter(has_text="Composed symbol")
+        try:
+            await details.or_(symbols).first.wait_for(timeout=60_000)
+        except Exception as exc:
+            raise RuntimeError(
+                "CAMDS did not open the MDS editor after the classification step. Review the browser; "
+                "an ID may already be allocated.") from exc
+        if await symbols.count() and await symbols.first.is_visible():
+            raise RuntimeError(
+                "This classification opens a second wizard step asking for ISO 1043 symbols "
+                "(Basic polymer, Fillers, Plasticizers, Flame retardants, Composed symbol). Choosing "
+                "them has not been discovered, so nothing is guessed. An ID is already allocated: "
+                "finish or discard this Material in CAMDS, then map it as an existing Material reference.")
+
+    async def leave_editor(self, request=None) -> dict:
+        """Return to Search from an open editor, so one Create does not dead-end the session.
+
+        This is the same navigation the tree import performs between Materials.
+        An unsaved-data dialog is never accepted automatically: if CAMDS raises
+        one, the editor is left exactly as it was.
+        """
+        if not self.editor_open:
+            raise RuntimeError("No open MDS editor to leave")
+        await self.page.goto(SEARCH_URL, wait_until="commit", timeout=NAVIGATION_TIMEOUT_MS)
+        for _ in range(2):
+            await asyncio.sleep(0.35)
+            await expect(self.page.locator('.el-loading-mask:visible')).to_have_count(0, timeout=60_000)
+        if await self.page.get_by_role("dialog").count():
+            raise RuntimeError("CAMDS blocked navigation with a dialog; the editor is unchanged. Review it in the browser.")
+        await self.page.get_by_role("tab", name="Component", exact=True).wait_for(timeout=30_000)
+        self.editor_open = False
+        self.results_ready = False
+        return {"kind": "leave_editor", "identity": "", "editor_open": False,
+                "note": "Left the MDS editor and returned to Search. Unsaved form data was discarded; any draft already saved keeps its allocated ID."}
 
     async def save(self, request=None) -> dict:
         if not self.editor_open:

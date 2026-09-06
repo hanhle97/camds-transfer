@@ -44,7 +44,7 @@ def test_partial_create_failure_locks_controls_but_allows_close():
 def test_loading_node_does_not_silently_map_unsupported_classification():
     app = QApplication.instance() or QApplication([])
     tab = CamdsTab()
-    node = MDSNode("m", 1, NodeType.MATERIAL, "Polymer", classification="5.1.a", material_number="M1")
+    node = MDSNode("m", 1, NodeType.MATERIAL, "Polymer", classification="8.4", material_number="M1")
     tab.set_document(SimpleNamespace(root=node))
     tab.load_node()
     assert tab.create_classification.currentText() == ""

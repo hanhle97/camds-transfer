@@ -5,8 +5,85 @@ import copy
 import hashlib
 import json
 import math
+import os
 import re
 from dataclasses import dataclass, field
+
+from .application_mapping import ApplicationMapping
+from .material_classifications import classification_code, known_codes
+
+
+CAS_PATTERN = re.compile(r"\d{2,7}-\d{2}-\d")
+
+
+def real_cas(node) -> str | None:
+    """The IMDS "system" placeholder marks a system group, not a CAS number."""
+    cas = (node.get("cas_number") or "").strip()
+    return cas if CAS_PATTERN.fullmatch(cas) else None
+
+
+def substance_key(node) -> str:
+    """Identity of a substance within one material.
+
+    System groups all share the "system" placeholder while being different
+    declarations ("Pigment portion, not to declare" is not "Misc., not to
+    declare"), so identity falls back to the name and never to the placeholder.
+    """
+    return real_cas(node) or "name:" + (node.get("name") or "").strip().casefold()
+
+
+def merge_duplicate_substances(material) -> list[str]:
+    """Combine repeated substances of one material by adding their portions."""
+    groups: dict[str, list] = {}
+    for child in material.get("children", []):
+        groups.setdefault(substance_key(child), []).append(child)
+    merged, notes = [], []
+    for group in groups.values():
+        first = group[0]
+        if len(group) > 1:
+            _combine(first, group)
+            notes.append(f"{material.get('name')}: merged {len(group)} entries of "
+                         f"{first.get('name')} into one portion")
+        merged.append(first)
+    material["children"] = merged
+    return notes
+
+
+def _combine(target, group) -> None:
+    if any(item.get("is_rest") for item in group):
+        # Rest absorbs: the remainder is still the remainder.
+        target["is_rest"] = True
+        target["percentage"] = target["percentage_min"] = target["percentage_max"] = None
+        return
+    lows = highs = 0.0
+    for item in group:
+        if item.get("percentage") is not None:
+            lows += float(item["percentage"])
+            highs += float(item["percentage"])
+        else:
+            lows += float(item.get("percentage_min") or 0.0)
+            highs += float(item.get("percentage_max") or item.get("percentage_min") or 0.0)
+    if any(item.get("percentage") is None for item in group):
+        target["percentage"] = None
+        target["percentage_min"], target["percentage_max"] = lows, min(highs, 100.0)
+    else:
+        target["percentage"] = min(lows, 100.0)
+        target["percentage_min"] = target["percentage_max"] = None
+
+
+# Operators triaging a large report can raise this to see the whole list.
+MAX_REPORTED_ERRORS = int(os.getenv("CAMDS_MAX_REPORTED_ERRORS", "50"))
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedStep:
+    """One CAMDS mutation the importer will perform, in execution order."""
+
+    uid: str
+    kind: str
+    action: str
+    name: str
+    path: tuple[str, ...] = ()
 
 
 def numeric(value, label, *, positive=False):
@@ -19,13 +96,16 @@ def numeric(value, label, *, positive=False):
 
 
 def proportion(node):
-    modes = [bool(node.get("is_rest")), node.get("percentage") is not None,
+    # IMDS prints "Rest 7.98": Rest is the portion type and the number is the
+    # value it resolves to, not an independent Fixed percentage. CAMDS Rest
+    # takes no value, so the number is informational and kept in the parsed data.
+    if node.get("is_rest"):
+        return ("rest",)
+    modes = [node.get("percentage") is not None,
              node.get("percentage_min") is not None or node.get("percentage_max") is not None]
     if sum(modes) != 1:
         raise ValueError(f"{node['name']}: specify exactly one of Fixed, Range, Rest")
     if modes[0]:
-        return ("rest",)
-    if modes[1]:
         value = numeric(node["percentage"], node["name"])
         if value > 100:
             raise ValueError("Percentage must not exceed 100")
@@ -42,100 +122,229 @@ class ImportRequest:
     root: dict
     # Exact user-selected CAMDS ID/version per Material UID; never infer from IMDS ID.
     material_refs: dict[str, tuple[str, str]] = field(default_factory=dict)
+    # Filled by snapshot(): repeated substances combined before any CAMDS work.
+    merges: list[str] = field(default_factory=list)
+    # Filled by validate(): accepted as declared, but the operator is told.
+    warnings: list[str] = field(default_factory=list)
 
     def snapshot(self):
-        return copy.deepcopy(self)
+        clone = copy.deepcopy(self)
+        clone.merges = clone._normalise()
+        return clone
 
-    def validate(self):
+    def _normalise(self) -> list[str]:
+        notes: list[str] = []
+        def visit(node):
+            if node.get("node_type") == "MATERIAL" and node.get("uid") not in self.material_refs:
+                if all(c.get("node_type") == "SUBSTANCE" for c in node.get("children", [])):
+                    notes.extend(merge_duplicate_substances(node))
+            for child in node.get("children", []):
+                visit(child)
+        visit(self.root)
+        return notes
+
+    def validate(self, mapping=None):
         errors = []
+        warnings = []
         uids = set()
+        mapping = mapping if mapping is not None else ApplicationMapping()
         material_uids = set()
-        component_names = set()
         if self.root.get("node_type") not in ("COMPONENT", "MATERIAL"):
             raise ValueError("Import root must be Component or Material")
 
+        def warn(message):
+            """Reported to the operator, but not a reason to refuse the import."""
+            if message not in warnings:
+                warnings.append(message)
+
+        def fail(message):
+            # Report every blocker at once: fixing a 1500-node mapping one
+            # error per Validate press is not workable.
+            if message not in errors:
+                errors.append(message)
+
+        def measure(value, label, *, positive=False):
+            try:
+                return numeric(value, label, positive=positive)
+            except (ValueError, TypeError) as exc:
+                fail(str(exc))
+                return None
+
         def visit(node, parent=None):
-            uid, kind, name = node.get("uid"), node.get("node_type"), node.get("name", "")
+            uid, kind = node.get("uid"), node.get("node_type")
+            name = node.get("name") or ""
             if not uid or uid in uids:
-                raise ValueError("Missing or repeated node UID")
+                fail("Missing or repeated node UID")
+                return
             uids.add(uid)
-            if not name.strip() or len(name) > 100:
-                raise ValueError(f"{uid}: name required, maximum 100 characters")
-            if kind not in ("COMPONENT", "MATERIAL", "SUBSTANCE"):
-                raise ValueError(f"{name}: {kind} import is not yet supported")
-            if node.get("application_id") or node.get("application_text"):
-                raise ValueError(f"{name}: application mapping requires manual review")
+            label = name.strip() or uid
+            if not name.strip():
+                fail(f"{label}: name required")
+            elif len(name) > 100 and kind != "SUBSTANCE":
+                # Component and Material names are typed into the CAMDS form.
+                # A Substance is looked up, and chemical names legitimately run
+                # far longer than any form field.
+                fail(f"{label}: name must not exceed 100 characters")
+            if kind not in ("COMPONENT", "SEMICOMPONENT", "MATERIAL", "SUBSTANCE"):
+                fail(f"{label}: {kind} import is not yet supported")
+                return
+            application = node.get("application_text") or node.get("application_id")
+            if application and kind != "SUBSTANCE":
+                # Only the per-substance rows of a Material Application tab have
+                # been observed; a Material-level application has no known control.
+                fail(f"{label}: a {kind} application has no discovered CAMDS control")
+            elif application and not mapping.resolve(name, node.get("application_text")):
+                # An application is a regulatory statement. It is matched against
+                # the options CAMDS offers for that substance; anything that does
+                # not match exactly is left unset and reported, never guessed.
+                warn(f"{label}: application {node.get('application_text')!r} is applied only if the "
+                     "wording matches an option CAMDS offers; otherwise it is left unset")
             if kind == "COMPONENT":
-                if name in component_names:
-                    raise ValueError(f"{name}: repeated Component names cannot yet be selected unambiguously")
-                component_names.add(name)
-                numeric(node.get("weight_g"), name + " mass", positive=True)
+                measure(node.get("weight_g"), name + " mass", positive=True)
                 if parent:
-                    quantity = numeric(node.get("quantity"), name + " quantity", positive=True)
-                    if not quantity.is_integer():
-                        raise ValueError(f"{name}: Component quantity must be an integer")
+                    quantity = measure(node.get("quantity"), name + " quantity", positive=True)
+                    if quantity is not None and not quantity.is_integer():
+                        fail(f"{label}: Component quantity must be an integer")
                 if not node.get("children"):
-                    raise ValueError(f"{name}: Component has no children")
+                    fail(f"{label}: Component has no children")
+            if kind == "SEMICOMPONENT":
+                if parent and parent.get("node_type") == "SEMICOMPONENT":
+                    # Inserting a Semicomponent inside another one was listed on
+                    # the toolbar but never exercised, and such a node is declared
+                    # by portion rather than mass, so its input is unknown.
+                    fail(f"{label}: a Semicomponent inside a Semicomponent is not verified yet")
+                    return
+                # CAMDS shows no Quantity field for a Semicomponent under a
+                # Component, so its mass counts once.
+                measure(node.get("weight_g"), name + " mass", positive=True)
+                if not node.get("children"):
+                    fail(f"{label}: Semicomponent has no children")
             if kind == "MATERIAL":
                 material_uids.add(uid)
-                if parent:
-                    numeric(node.get("weight_g"), name + " reference mass", positive=True)
+                in_semicomponent = bool(parent) and parent.get("node_type") == "SEMICOMPONENT"
+                if in_semicomponent:
+                    # CAMDS asks a Material under a Semicomponent for a Proportion,
+                    # not a Mass. See SEMICOMPONENT_APPLICATION_DISCOVERY.md.
+                    try:
+                        proportion(node)
+                    except (ValueError, TypeError, KeyError) as exc:
+                        fail(str(exc))
+                elif parent:
+                    measure(node.get("weight_g"), name + " reference mass", positive=True)
                 if uid in self.material_refs:
                     ref = self.material_refs[uid]
                     if len(ref) != 2 or not re.fullmatch(r"CA_\d+_\d+", ref[0]) or not re.fullmatch(r"\d+(?:\.\d+)?", ref[1]):
-                        raise ValueError(f"{name}: exact CAMDS ID and version required")
+                        fail(f"{label}: exact CAMDS ID and version required")
                     return  # Existing Material composition is not overwritten.
-                if node.get("classification") != "1.1.1":
-                    raise ValueError(f"{name}: new Material only supports 1.1.1; map an existing CAMDS Material instead")
+                raw = node.get("classification")
+                code = classification_code(raw)
+                if code not in known_codes():
+                    fail(f"{label}: classification {raw or 'missing'!r} was not seen in the CAMDS creation "
+                         "wizard; record it or map an existing CAMDS Material instead")
+                    return
                 children = node.get("children", [])
                 if not children:
-                    raise ValueError(f"{name}: new Material requires substances")
-                if any(c.get("node_type") != "SUBSTANCE" for c in children):
-                    raise ValueError(f"{name}: nested Materials are not yet supported")
-                cas = [c.get("cas_number") for c in children]
-                if len(cas) != len(set(cas)):
-                    raise ValueError(f"{name}: duplicate CAS entries must be merged before import")
-                modes = [proportion(c) for c in children]
-                rests = sum(m[0] == "rest" for m in modes)
-                low = sum(m[1] for m in modes if m[0] != "rest")
-                high = sum(m[-1] for m in modes if m[0] != "rest")
-                if rests > 1 or (rests and high > 100) or (not rests and not low - 0.001 <= 100 <= high + 0.001):
-                    raise ValueError(f"{name}: composition does not balance to 100%")
+                    fail(f"{label}: new Material requires substances")
+                elif any(c.get("node_type") != "SUBSTANCE" for c in children):
+                    fail(f"{label}: nested Materials are not yet supported")
+                else:
+                    keys = [substance_key(c) for c in children]
+                    if len(keys) != len(set(keys)):
+                        fail(f"{label}: repeated substances were not combined before import")
+                    try:
+                        modes = [proportion(c) for c in children]
+                    except (ValueError, TypeError, KeyError) as exc:
+                        fail(str(exc))
+                        modes = None
+                    if modes:
+                        rests = sum(m[0] == "rest" for m in modes)
+                        low = sum(m[1] for m in modes if m[0] != "rest")
+                        high = sum(m[-1] for m in modes if m[0] != "rest")
+                        if rests > 1:
+                            fail(f"{label}: a composition can declare Rest only once")
+                        elif (rests and high > 100) or (not rests and not low - 0.001 <= 100 <= high + 0.001):
+                            warn(f"{label}: composition totals {low:g}-{high:g}% instead of 100%; "
+                                 "imported as declared")
             if kind == "SUBSTANCE":
-                if not re.fullmatch(r"\d{2,7}-\d{2}-\d", node.get("cas_number") or ""):
-                    raise ValueError(f"{name}: real CAS required; system/joker is unsupported")
+                # Not every substance has a CAS; system groups never do. Such a
+                # substance is looked up by name instead.
+                if not real_cas(node) and not name.strip():
+                    fail(f"{label}: a substance needs either a CAS number or a name to look up")
+                elif not real_cas(node) and len(name) > 50:
+                    fail(f"{label}: no CAS, and the name exceeds the 50 characters the CAMDS "
+                         "substance search accepts")
                 if node.get("children"):
-                    raise ValueError(f"{name}: Substance cannot contain child nodes")
-                proportion(node)
-            if node.get("application_id") or node.get("application_text"):
-                raise ValueError(f"{name}: application mapping requires manual review")
+                    fail(f"{label}: Substance cannot contain child nodes")
+                try:
+                    proportion(node)
+                except (ValueError, TypeError, KeyError) as exc:
+                    fail(str(exc))
             number = node.get("material_number") if kind == "MATERIAL" else node.get("part_number")
             if number and len(number) > 50:
-                raise ValueError(f"{name}: number exceeds 50 characters")
+                fail(f"{label}: number exceeds 50 characters")
+            allowed = {"COMPONENT": ("COMPONENT", "SEMICOMPONENT", "MATERIAL"),
+                       # A Semicomponent holds Materials and nested Semicomponents.
+                       "SEMICOMPONENT": ("SEMICOMPONENT", "MATERIAL")}.get(kind)
             for child in node.get("children", []):
-                if kind == "COMPONENT" and child.get("node_type") not in ("COMPONENT", "MATERIAL"):
-                    raise ValueError(f"{name}: only Component/Material children supported")
+                if allowed and child.get("node_type") not in allowed:
+                    fail(f"{label}: a {kind} accepts only {'/'.join(allowed)} children")
                 visit(child, node)
-            if kind == "COMPONENT":
-                child_names = [c["name"] for c in node["children"]]
-                if len(child_names) != len(set(child_names)):
-                    raise ValueError(f"{name}: duplicate sibling names require disambiguation before import")
-                total = sum(numeric(c.get("weight_g"), c["name"] + " mass") *
-                            (numeric(c.get("quantity"), c["name"] + " quantity") if c["node_type"] == "COMPONENT" else 1)
-                            for c in node["children"])
-                expected = float(node["weight_g"])
-                if not math.isclose(total, expected, rel_tol=0.001, abs_tol=0.000001):
-                    raise ValueError(f"{name}: children total {total:g} g differs from {expected:g} g; review mass/quantity semantics")
+            if kind == "SEMICOMPONENT" and node.get("children"):
+                try:
+                    modes = [proportion(c) for c in node["children"]]
+                except (ValueError, TypeError, KeyError):
+                    modes = None
+                if modes:
+                    rests = sum(m[0] == "rest" for m in modes)
+                    low = sum(m[1] for m in modes if m[0] != "rest")
+                    high = sum(m[-1] for m in modes if m[0] != "rest")
+                    if rests > 1:
+                        fail(f"{label}: a Semicomponent can declare Rest only once")
+                    elif (rests and high > 100) or (not rests and not low - 0.001 <= 100 <= high + 0.001):
+                        warn(f"{label}: contents total {low:g}-{high:g}% instead of 100%; imported as declared")
+            if kind == "COMPONENT" and node.get("children"):
+                # Repeated names need no disambiguation: the importer addresses
+                # tree nodes by document order, the order in which it added them.
+                total = 0.0
+                complete = True
+                for c in node["children"]:
+                    mass = measure(c.get("weight_g"), (c.get("name") or "?") + " mass")
+                    count = 1.0
+                    if c.get("node_type") == "COMPONENT":
+                        count = measure(c.get("quantity"), (c.get("name") or "?") + " quantity")
+                    if mass is None or count is None:
+                        complete = False
+                        continue
+                    total += mass * count
+                expected = node.get("weight_g")
+                if complete and expected is not None:
+                    expected = float(expected)
+                    if not math.isclose(total, expected, rel_tol=0.001, abs_tol=0.000001):
+                        share = abs(total - expected) / expected * 100 if expected else float("inf")
+                        warn(f"{label}: children total {total:g} g against {expected:g} g declared "
+                             f"({share:.2f}% apart); imported as declared, CAMDS shows its own deviation")
+
         try:
             visit(self.root)
             if set(self.material_refs) - material_uids:
-                raise ValueError("Material mapping contains unknown node UIDs")
+                fail("Material mapping contains unknown node UIDs")
             if self.root["uid"] in self.material_refs:
-                raise ValueError("A Material root import must create a new Material, not map an existing root")
-        except (ValueError, TypeError, KeyError) as exc:
-            errors.append(str(exc))
+                fail("A Material root import must create a new Material, not map an existing root")
+        except (TypeError, KeyError, RecursionError) as exc:
+            fail(str(exc))
+        self.warnings = warnings
         if errors:
-            raise ValueError("Import blocked before CAMDS changes: " + "; ".join(errors))
+            limit = MAX_REPORTED_ERRORS
+            shown, extra = errors[:limit], len(errors) - limit
+            summary = "Import blocked before CAMDS changes"
+            if len(errors) > 1:
+                summary += f" ({len(errors)} problems)"
+            if extra > 0:
+                shown.append(f"... and {extra} more")
+            # One problem per line: messages contain their own punctuation, so a
+            # "; " separator split them and produced orphaned fragments.
+            raise ValueError(summary + ":" + chr(10) + chr(10).join(shown))
+        return warnings
 
     @property
     def fingerprint(self):
@@ -152,3 +361,33 @@ class ImportRequest:
                     visit(c)
         visit(self.root)
         return result
+
+    def plan(self) -> list[PlannedStep]:
+        """Ordered steps run() will execute; the source of truth for progress totals."""
+        steps: list[PlannedStep] = []
+        for mat in self.materials():
+            if mat["uid"] in self.material_refs:
+                steps.append(PlannedStep(mat["uid"], "MATERIAL", "reuse_material", mat["name"]))
+                continue
+            steps.append(PlannedStep(mat["uid"], "MATERIAL", "create_material", mat["name"]))
+            # Rest is attached last, mirroring run().
+            for substance in sorted(mat["children"], key=lambda n: bool(n.get("is_rest"))):
+                steps.append(PlannedStep(substance["uid"], "SUBSTANCE", "add_substance",
+                                         substance["name"], (mat["name"],)))
+        root = self.root
+        if root["node_type"] == "MATERIAL":
+            return steps
+        steps.append(PlannedStep(root["uid"], "COMPONENT", "create_root", root["name"]))
+
+        def walk(node, path):
+            for child in node["children"]:
+                kind = child["node_type"]
+                if kind in ("COMPONENT", "SEMICOMPONENT"):
+                    action = "add_component" if kind == "COMPONENT" else "add_semicomponent"
+                    steps.append(PlannedStep(child["uid"], kind, action, child["name"], tuple(path)))
+                    walk(child, path + [child["name"]])
+                else:
+                    steps.append(PlannedStep(child["uid"], "MATERIAL", "attach_material", child["name"], tuple(path)))
+
+        walk(root, [root["name"]])
+        return steps

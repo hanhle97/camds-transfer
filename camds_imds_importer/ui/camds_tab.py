@@ -6,9 +6,11 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox, QComboBox,
     QLineEdit, QPlainTextEdit, QPushButton, QLabel, QTableWidget,
-    QTableWidgetItem, QAbstractItemView,
+    QTableWidgetItem, QAbstractItemView, QMessageBox,
 )
 
+from ..camds.import_control import brief
+from ..camds.material_classifications import classification_code, describe, known_codes, sort_key
 from ..camds.operations import SearchRequest, CreateRequest, KINDS
 from ..workers.operations_worker import OperationsWorker
 from .import_dialog import ImportDialog
@@ -17,23 +19,46 @@ from .import_dialog import ImportDialog
 class CamdsTab(QWidget):
     log_message = Signal(str)
     operation_status = Signal(str, bool)
+    node_progress = Signal(object)
+    session_changed = Signal(str)
+    login_required = Signal()
+    session_ready = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.worker = None
         self.busy = False
         self.editor_open = False
+        self.importing = False
         self.last_error = ""
         self.parsed_root = None
+        self.session = "UNKNOWN"
         root = QVBoxLayout(self)
         bar = QHBoxLayout()
         self.open_button = QPushButton("Open CAMDS browser")
         self.close_button = QPushButton("Close browser session")
         bar.addWidget(self.open_button)
         bar.addWidget(self.close_button)
+        self.sign_in_button = QPushButton("Sign in to CAMDS")
+        bar.addWidget(self.sign_in_button)
         self.import_tree_button = QPushButton("Import parsed tree…")
         bar.addWidget(self.import_tree_button)
+        self.api_button = QPushButton("Test API session")
+        bar.addWidget(self.api_button)
+        self.discover_button = QPushButton("Record classification wizard")
+        bar.addWidget(self.discover_button)
         root.addLayout(bar)
+        controls = QHBoxLayout()
+        self.pause_button = QPushButton("Pause import")
+        self.resume_button = QPushButton("Resume import")
+        self.stop_button = QPushButton("Stop import")
+        self.import_status = QLabel("Import idle")
+        self.import_status.setWordWrap(True)
+        for widget in (self.pause_button, self.resume_button, self.stop_button):
+            widget.setEnabled(False)
+            controls.addWidget(widget)
+        controls.addWidget(self.import_status, 1)
+        root.addLayout(controls)
         self.status = QLabel("Open a browser session. Sign in there if requested; select English on CAMDS.")
         self.status.setWordWrap(True)
         root.addWidget(self.status)
@@ -57,7 +82,10 @@ class CamdsTab(QWidget):
         self.create_kind.addItems(KINDS[:3])
         self.create_name, self.create_number, self.create_mass = (QLineEdit() for _ in range(3))
         self.create_classification = QComboBox()
-        self.create_classification.addItems(("", "1.1.1"))
+        self.create_classification.addItem("", "")
+        for code in sorted(known_codes(), key=sort_key):
+            label = f"{code}: {describe(code)}" if describe(code) else code
+            self.create_classification.addItem(label, code)
         self.create_remark = QPlainTextEdit()
         self.create_remark.setMaximumHeight(65)
         self.source_node = QComboBox()
@@ -71,8 +99,11 @@ class CamdsTab(QWidget):
         self.create_button = QPushButton("Create and fill root")
         self.save_button = QPushButton("Save open draft")
         self.save_button.setEnabled(False)
+        self.leave_button = QPushButton("Leave editor")
+        self.leave_button.setEnabled(False)
         create_form.addRow(self.create_button)
         bar.addWidget(self.save_button)
+        bar.addWidget(self.leave_button)
         forms_layout.addWidget(create_group)
         root.addWidget(self.forms)
         self.results = QTableWidget()
@@ -83,7 +114,14 @@ class CamdsTab(QWidget):
         self.search_button.clicked.connect(self.search)
         self.create_button.clicked.connect(self.create)
         self.save_button.clicked.connect(self.save)
+        self.leave_button.clicked.connect(self.leave_editor)
+        self.api_button.clicked.connect(lambda: self._submit("api_check", None))
+        self.discover_button.clicked.connect(self.discover_classifications)
         self.import_tree_button.clicked.connect(self.review_import)
+        self.sign_in_button.clicked.connect(self.request_sign_in)
+        self.pause_button.clicked.connect(self.pause_import)
+        self.resume_button.clicked.connect(self.resume_import)
+        self.stop_button.clicked.connect(self.stop_import)
         self.load_node_button.clicked.connect(self.load_node)
         self.search_kind.currentTextChanged.connect(self._kind_changed)
         self.create_kind.currentTextChanged.connect(self._kind_changed)
@@ -111,12 +149,25 @@ class CamdsTab(QWidget):
         self._update()
 
     def review_import(self) -> None:
-        if self.parsed_root is None or self.worker is None or self.busy or self.editor_open:
-            self.status.setText("Parse a document and open a CAMDS browser session before importing the tree.")
+        # Name the precondition that actually failed; a generic message sent
+        # operators back to steps they had already completed.
+        if self.parsed_root is None:
+            self.status.setText("Parse an IMDS PDF before importing the tree.")
+            return
+        if self.worker is None:
+            self.status.setText("Open a CAMDS browser session before importing the tree.")
+            return
+        if self.busy:
+            self.status.setText("A CAMDS operation is still running. Wait for it to finish, then import the tree.")
+            return
+        if self.editor_open:
+            self.status.setText(
+                "An MDS editor is open in the browser, so the tree import cannot start. "
+                "Use Save open draft to keep it, then Leave editor to return to Search — or Close browser session.")
             return
         dialog = ImportDialog(self.parsed_root, self)
         if dialog.exec() and dialog.request:
-            self._submit("import_tree", dialog.request)
+            self._submit("import_tree", dialog.request, resume=dialog.resume.isChecked())
 
     def load_node(self) -> None:
         node = self.source_node.currentData()
@@ -127,10 +178,11 @@ class CamdsTab(QWidget):
         self.create_name.setText(node["name"])
         self.create_number.setText((node.get("material_number") if kind == "Material" else node.get("part_number")) or "")
         self.create_mass.setText(str(node["weight_g"]) if node.get("weight_g") is not None else "")
-        classification = node.get("classification") or ""
-        self.create_classification.setCurrentIndex(1 if classification == "1.1.1" else 0)
+        code = classification_code(node.get("classification"))
+        index = self.create_classification.findData(code) if code else -1
+        self.create_classification.setCurrentIndex(max(index, 0))
         self.create_remark.clear()
-        self.status.setText("IMDS node loaded for review. Only this root will be filled; its children are not imported." + (" Material classification is unsupported; automatic Create is unavailable for this classification." if kind == "Material" and classification != "1.1.1" else ""))
+        self.status.setText("IMDS node loaded for review. Only this root will be filled; its children are not imported." + (" Material classification is unsupported; automatic Create is unavailable for this classification." if kind == "Material" and index < 0 else ""))
 
     def open_session(self) -> None:
         if self.worker is not None:
@@ -139,6 +191,10 @@ class CamdsTab(QWidget):
         self.last_error = ""
         self.worker.ready.connect(self._ready)
         self.worker.operation_progress.connect(self._progress)
+        self.worker.node_progress.connect(self._node_progress)
+        self.worker.session_changed.connect(self._session_changed)
+        self.worker.login_stage.connect(self.log_message.emit)
+        self.worker.notice.connect(self._notice)
         self.worker.result.connect(self._result)
         self.worker.failed.connect(self._failed)
         self.worker.session_error.connect(lambda message: self._failed(message, self.editor_open))
@@ -161,6 +217,12 @@ class CamdsTab(QWidget):
         self.busy = False
         self.status.setText("Browser open. Complete login/slider there if needed and use English, then run Search or Create.")
         self._update()
+        self.session_ready.emit()
+
+    def _notice(self, message: str) -> None:
+        """Non-fatal condition: the session stays usable."""
+        self.status.setText(message)
+        self.log_message.emit(message)
 
     def _progress(self, message: str) -> None:
         self.busy = True
@@ -169,20 +231,72 @@ class CamdsTab(QWidget):
         self.operation_status.emit(message, False)
         self._update()
 
-    def _submit(self, action, request) -> None:
-        if not self.worker or self.busy or (self.editor_open and action != "save"):
+    def _submit(self, action, request, **options) -> None:
+        if not self.worker or self.busy or (self.editor_open and action not in ("save", "leave_editor")):
             return
         try:
-            if request is not None:
+            if request is not None and hasattr(request, "validate"):
                 request.validate()
         except ValueError as exc:
             self.status.setText(str(exc))
             return
         self.busy = True
+        self.importing = action == "import_tree"
         self.last_error = ""
         self.results.setRowCount(0)
-        self.status.setText({"search": "Searching CAMDS…", "create": "Preparing root…", "save": "Saving open draft…", "import_tree": "Transferring parsed tree; saving each step…"}[action])
-        self.worker.submit(action, request)
+        self.status.setText({"search": "Searching CAMDS…", "create": "Preparing root…", "save": "Saving open draft…", "leave_editor": "Leaving the editor and returning to Search…",
+                             "discover_classifications": "Opening the classification wizard to record it; nothing is created…",
+                             "api_check": "Checking the CAMDS API session; nothing is created…",
+                             "import_tree": "Transferring parsed tree; saving each step…",
+                             "login": "Signing in on this browser session…"}[action])
+        if options:
+            self.worker.submit(action, request, **options)
+        else:
+            self.worker.submit(action, request)
+        self._update()
+
+    def request_sign_in(self) -> None:
+        """Ask the window for credentials; login runs on this same browser session."""
+        self.login_required.emit()
+
+    def sign_in(self, credentials) -> None:
+        self._submit("login", credentials)
+
+    def pause_import(self) -> None:
+        if self.worker and self.importing:
+            self.worker.control.pause()
+            self.import_status.setText("Pause requested; the import stops after the current CAMDS step completes.")
+            self._update()
+
+    def resume_import(self) -> None:
+        if self.worker and self.importing:
+            self.worker.control.resume()
+            self.import_status.setText("Resuming…")
+            self._update()
+
+    def stop_import(self) -> None:
+        if self.worker and self.importing:
+            self.worker.control.stop()
+            self.import_status.setText("Stop requested; already saved objects are kept and not rolled back.")
+            self._update()
+
+    def _node_progress(self, event) -> None:
+        self.busy = True
+        detail = f"{event.counter} · {event.kind or '-'} · {event.parent_path}"
+        if event.field_label:
+            detail += f" · field: {event.field_label}"
+        self.import_status.setText(f"{event.message} — {detail}")
+        self.node_progress.emit(event)
+        if event.event in ("node_failed", "stopped", "material_readback_verified", "complete_readback_verified"):
+            self.log_message.emit(event.message)
+        self._update()
+
+    def _session_changed(self, status: str) -> None:
+        self.session = status
+        self.session_changed.emit(status)
+        if status == "EXPIRED":
+            self.status.setText("CAMDS session expired in this browser. Sign in again before running operations.")
+            self.log_message.emit("CAMDS session expired; operations are blocked until sign-in")
         self._update()
 
     def search(self) -> None:
@@ -191,14 +305,45 @@ class CamdsTab(QWidget):
 
     def create(self) -> None:
         kind = self.create_kind.currentText()
-        self._submit("create", CreateRequest(kind, self.create_name.text().strip(), self.create_number.text().strip(), self.create_mass.text().strip() if kind == "Component" else "", self.create_classification.currentText() if kind == "Material" else "", self.create_remark.toPlainText()))
+        self._submit("create", CreateRequest(kind, self.create_name.text().strip(), self.create_number.text().strip(), self.create_mass.text().strip() if kind == "Component" else "", self.create_classification.currentData() if kind == "Material" else "", self.create_remark.toPlainText()))
 
     def save(self) -> None:
         self._submit("save", None)
 
+    def discover_classifications(self) -> None:
+        """Record the material classification wizard so more than 1.1.1 can be supported."""
+        confirm = QMessageBox.question(
+            self, "Record classification wizard",
+            "Open the CAMDS 'Creation of a new material' dialog and record its structure?\n\n"
+            "CAMDS allocates an MDS ID only when Next opens the editor. This stops at the dialog and never "
+            "presses Next, so no MDS is created and no ID is consumed. The dialog is closed again and a "
+            "snapshot is written to debug/material-classifications/.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if confirm == QMessageBox.StandardButton.Yes:
+            self._submit("discover_classifications", None)
+
+    def leave_editor(self) -> None:
+        """Return to Search so one Create does not dead-end the whole session."""
+        confirm = QMessageBox.question(
+            self, "Leave MDS editor",
+            "Leave the open MDS editor and return to Search?\n\n"
+            "Anything you have not saved is discarded. A draft you already saved keeps its allocated CAMDS ID "
+            "and is not deleted. Nothing is sent or submitted.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
+        if confirm == QMessageBox.StandardButton.Yes:
+            self._submit("leave_editor", None)
+
     def _result(self, result) -> None:
         self.busy = False
+        self.importing = False
         self.editor_open = result.get("editor_open", result["kind"] == "create")
+        if result["kind"] == "login":
+            self.session = "AUTHENTICATED"
+            self.session_changed.emit(self.session)
+        if result["kind"] == "import_tree":
+            self.import_status.setText(f"Import complete: {result.get('nodes', 0)} / {result.get('total', 0)} steps verified.")
         self.save_button.setEnabled(self.editor_open)
         if result["kind"] == "search":
             self.results.setColumnCount(len(result["columns"]))
@@ -215,10 +360,14 @@ class CamdsTab(QWidget):
 
     def _failed(self, message, editor_open) -> None:
         self.busy = False
+        self.importing = False
+        short = brief(message)
+        self.import_status.setText("Import stopped: " + brief(message, lines=1))
         self.editor_open = editor_open
         suffix = " The editor may contain a partially filled root. Review it and the import journal; completed Save operations are not rolled back. No automatic retry." if editor_open else ""
-        self.last_error = message + suffix
-        self.status.setText(message + suffix)
+        self.last_error = short + suffix
+        self.status.setText(short + suffix)
+        # The log keeps the full text, including any page snapshot.
         self.log_message.emit(message + suffix)
         self._update()
         if editor_open:
@@ -229,6 +378,9 @@ class CamdsTab(QWidget):
         if worker:
             worker.deleteLater()
         self.busy = False
+        self.importing = False
+        self.session = "UNKNOWN"
+        self.session_changed.emit(self.session)
         self.editor_open = False
         self.save_button.setEnabled(False)
         self.status.setText((self.last_error + " " if self.last_error else "") + "Browser session closed. Open a new session to continue.")
@@ -241,4 +393,15 @@ class CamdsTab(QWidget):
         idle = self.worker is not None and not stopping and not self.busy
         self.forms.setEnabled(idle and not self.editor_open)
         self.save_button.setEnabled(idle and self.editor_open and not self.last_error)
+        # Leaving stays available after a failure: it is the recovery path that
+        # does not throw away the whole browser session.
+        self.leave_button.setEnabled(idle and self.editor_open)
         self.import_tree_button.setEnabled(idle and not self.editor_open and self.parsed_root is not None)
+        self.sign_in_button.setEnabled(idle and not self.editor_open)
+        self.discover_button.setEnabled(idle and not self.editor_open)
+        self.api_button.setEnabled(idle and not self.editor_open)
+        control = getattr(self.worker, "control", None)
+        running = self.importing and control is not None and not stopping
+        self.pause_button.setEnabled(running and not control.paused and not control.stopping)
+        self.resume_button.setEnabled(running and control.paused)
+        self.stop_button.setEnabled(running and not control.stopping)

@@ -11,7 +11,7 @@ IMDS_RE = re.compile(r"(?P<id>\d+)\s*/\s*(?P<version>\d+\.\d+)")
 RANGE_RE = re.compile(r"(?P<minimum>\d+(?:\.\d+)?)\s*-\s*(?P<maximum>\d+(?:\.\d+)?)")
 NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
 APPLICATION_RE = re.compile(r"\[(?P<id>\d+)\]\s*$")
-CLASSIFICATION_RE = re.compile(r"^\d+(?:\.\d+)+(?:\s*:\s*.+)?$")
+CLASSIFICATION_RE = re.compile(r"^\d+(?:\.\d+)+(?:\.[A-Za-z])?(?:\s*:\s*.+)?$")
 
 
 @dataclass(slots=True)
@@ -33,8 +33,14 @@ def _number(value: str) -> float | None:
     return float(match.group()) if match else None
 
 
+# A PDF line break inside a hyphenated word leaves "lead- based". The hyphen is
+# attached to the preceding character, which distinguishes it from a real
+# separator such as "8(e) - Lead", where the hyphen stands alone.
+WRAPPED_HYPHEN_RE = re.compile(r"(\w)-\s+(\w)")
+
+
 def _clean(value: str) -> str | None:
-    cleaned = " ".join(value.split()).strip()
+    cleaned = WRAPPED_HYPHEN_RE.sub(r"\1-\2", " ".join(value.split()).strip())
     return cleaned or None
 
 
@@ -56,8 +62,12 @@ def parse_row(*, level: int, columns: ColumnText, source_page: int, source_text:
         combined_flags = _clean(" ".join(filter(None, (classification, combined_flags))))
         classification = None
 
-    application = _clean(columns.application)
-    application_match = APPLICATION_RE.search(application or "")
+    trailing = _clean(columns.application)
+    application_match = APPLICATION_RE.search(trailing or "")
+    # Only a bracketed IMDS application code identifies an application. Prose
+    # without one is a marking statement or an ELV exemption.
+    application = trailing if application_match else None
+    column_note = None if application_match else trailing
     digest = hashlib.sha1(f"{source_page}|{source_ordinal}|{level}|{source_text}".encode("utf-8")).hexdigest()[:16]
     quantity = _number(columns.quantity)
     material_number = identifier if identifier and not cas_number and classification else None
@@ -84,6 +94,7 @@ def parse_row(*, level: int, columns: ColumnText, source_page: int, source_text:
         svhc="SVHC" in (combined_flags or "").upper() or None,
         application_id=application_match.group("id") if application_match else None,
         application_text=application,
+        column_note=column_note,
         source_page=source_page,
         source_text=" ".join(source_text.split()),
     )

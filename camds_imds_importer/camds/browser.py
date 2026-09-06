@@ -10,6 +10,7 @@ from playwright.async_api import async_playwright
 
 from ..core.credentials import Credentials
 from .login import LoginResult, LoginStatus, login
+from .operations import NAVIGATION_TIMEOUT_MS
 from .discovery import capture_controls
 
 
@@ -57,7 +58,7 @@ class CamdsBrowser:
             context = await browser.new_context(storage_state=self.config.storage_state_path)
             page = await context.new_page()
             try:
-                await page.goto(base_url, wait_until="domcontentloaded", timeout=60_000)
+                await page.goto(base_url, wait_until="commit", timeout=NAVIGATION_TIMEOUT_MS)
                 initial = await capture_controls(page, target / "home")
                 last_url = page.url
                 deadline = asyncio.get_running_loop().time() + duration_seconds

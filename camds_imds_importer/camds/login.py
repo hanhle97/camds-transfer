@@ -9,6 +9,7 @@ from typing import Callable
 from playwright.async_api import Locator, Page
 
 from ..core.exceptions import CamdsNavigationError
+from .operations import NAVIGATION_TIMEOUT_MS
 from .selectors import AUTHENTICATED, LOGIN_BUTTON, LOGIN_PASSWORD, LOGIN_USERNAME, VERIFICATION, VERIFICATION_INPUT, VERIFICATION_SUBMIT, SelectorStrategy
 
 
@@ -47,11 +48,13 @@ async def _first_visible(page: Page, strategy: SelectorStrategy) -> Locator | No
 
 
 async def open_login_page(page: Page, login_url: str) -> None:
-    await page.goto(login_url, wait_until="domcontentloaded", timeout=60_000)
+    # "commit" resolves on the response; a high-latency link can spend minutes
+    # fetching the synchronous bundles that "domcontentloaded" waits for.
+    await page.goto(login_url, wait_until="commit", timeout=NAVIGATION_TIMEOUT_MS)
     try:
         await page.wait_for_function(
             "() => { const app = document.querySelector('#app'); return app && app.children.length > 0; }",
-            timeout=60_000,
+            timeout=NAVIGATION_TIMEOUT_MS,
         )
     except Exception as exc:
         raise CamdsNavigationError(

@@ -13,6 +13,7 @@ class TreeStatistics:
     components: int
     materials: int
     substances: int
+    semicomponents: int
     unknown_nodes: int
     rows_with_cas: int
     rows_with_ranges: int
@@ -35,7 +36,8 @@ def calculate_statistics(document: MDSDocument) -> TreeStatistics:
     return TreeStatistics(
         total_nodes=len(nodes), maximum_depth=max(node.level for node in nodes),
         components=counts[NodeType.COMPONENT], materials=counts[NodeType.MATERIAL],
-        substances=counts[NodeType.SUBSTANCE], unknown_nodes=counts[NodeType.UNKNOWN] + counts[NodeType.SEMICOMPONENT],
+        substances=counts[NodeType.SUBSTANCE], semicomponents=counts[NodeType.SEMICOMPONENT],
+        unknown_nodes=counts[NodeType.UNKNOWN],
         rows_with_cas=sum(bool(node.cas_number and node.cas_number != "system") for node in nodes),
         rows_with_ranges=sum(node.percentage_min is not None for node in nodes),
         rows_with_rest=sum(node.is_rest for node in nodes), warnings=len(document.warnings),

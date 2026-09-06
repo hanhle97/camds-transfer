@@ -195,8 +195,13 @@ class ImportRequest:
             application = node.get("application_text") or node.get("application_id")
             if application and kind != "SUBSTANCE":
                 # Only the per-substance rows of a Material Application tab have
-                # been observed; a Material-level application has no known control.
-                fail(f"{label}: a {kind} application has no discovered CAMDS control")
+                # been observed, so there is no control to write this into. The
+                # standing rule for an application that cannot be placed is to
+                # leave it unset and say so: an unset application is visibly
+                # missing, a guessed one is a false regulatory statement.
+                warn(f"{label}: a {kind}-level application "
+                     f"{node.get('application_text') or node.get('application_id')!r} has no "
+                     "discovered CAMDS control; left unset and reported")
             elif application and not mapping.resolve(name, node.get("application_text")):
                 # An application is a regulatory statement. It is matched against
                 # the options CAMDS offers for that substance; anything that does
@@ -362,6 +367,30 @@ class ImportRequest:
     def fingerprint(self):
         data = json.dumps({"root": self.root, "refs": self.material_refs}, sort_keys=True, ensure_ascii=False)
         return hashlib.sha256(data.encode()).hexdigest()
+
+    def node_applications(self):
+        """Applications declared on something other than a Substance.
+
+        CAMDS offers no control for these, so they are never written. They are
+        listed here so a run reports each one rather than dropping it quietly.
+
+        A Material mapped to an existing MDS is left out, the same way validate()
+        leaves it out: its composition is not ours to write, so nothing about it
+        was left unset by this run.
+        """
+        found = []
+
+        def visit(n):
+            if n.get("node_type") != "SUBSTANCE" and (n.get("application_text")
+                                                      or n.get("application_id")):
+                found.append(n)
+            if n.get("node_type") == "MATERIAL" and n.get("uid") in self.material_refs:
+                return
+            for c in n.get("children", []):
+                visit(c)
+
+        visit(self.root)
+        return found
 
     def materials(self):
         result = []

@@ -91,11 +91,46 @@ def test_a_reviewed_pairing_needs_no_warning(tmp_path):
     assert ImportRequest(tree()).validate(mapping) == []
 
 
-def test_a_material_level_application_has_no_known_control(tmp_path):
+def test_a_material_level_application_is_left_unset_and_reported(tmp_path):
+    """No CAMDS control exists for one, so it follows the rule every unplaceable
+    application follows: left unset and said out loud, never guessed."""
     root = tree()
     root["children"][0]["application_text"] = "Some material application [12]"
-    with pytest.raises(ValueError, match="a MATERIAL application has no discovered CAMDS control"):
-        ImportRequest(root).validate(ApplicationMapping(tmp_path / "none.json"))
+    request = ImportRequest(root)
+    warnings = request.validate(ApplicationMapping(tmp_path / "none.json"))
+    assert any("no discovered CAMDS control" in w and "left unset" in w for w in warnings), warnings
+    assert [n["uid"] for n in request.node_applications()] == ["m"]
+
+
+async def test_an_unplaceable_application_is_reported_even_if_the_run_fails(tmp_path):
+    """It is recorded before CAMDS is touched, so a later failure cannot hide it."""
+    import json
+
+    from camds_imds_importer.camds.tree_import import TreeImporter
+
+    root = tree()
+    root["children"][0]["application_text"] = "Some material application [12]"
+
+    class Broken:
+        reporter = None
+
+        async def prepare(self):
+            pass
+
+        async def create_root(self, node, on_allocated=None):
+            raise RuntimeError("CAMDS refused")
+
+        async def read_back_findings(self):
+            return []
+
+    importer = TreeImporter(Broken(), tmp_path)
+    with pytest.raises(RuntimeError, match="CAMDS refused"):
+        await importer.run(ImportRequest(root))
+    assert any("has no CAMDS control" in note for note in importer.skipped), importer.skipped
+    events = [json.loads(line) for line in
+              next(tmp_path.glob("*.jsonl")).read_text(encoding="utf-8").splitlines()]
+    assert any(e["event"] == "node_application_skipped" and e["kind"] == "MATERIAL"
+               for e in events), events
 
 
 class ApplicationBrowser:

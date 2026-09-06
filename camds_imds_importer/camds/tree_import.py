@@ -513,6 +513,17 @@ class TreeImporter:
         if request.merges or warnings:
             # Recorded next to the allocated IDs so the run can be audited later.
             journal.record("accepted_with_findings", merges=request.merges, warnings=warnings)
+        for node in request.node_applications():
+            # No CAMDS control exists for an application on anything but a
+            # Substance, so it is left unset. Recorded before the run touches
+            # CAMDS, so it is reported even if the run later fails.
+            declared = node.get("application_text") or node.get("application_id")
+            self.skipped.append(
+                f"{node.get('name')}: {node['node_type'].title()}-level application "
+                f"{declared!r} has no CAMDS control; left unset")
+            journal.record("node_application_skipped", uid=node.get("uid"),
+                           kind=node["node_type"], name=node.get("name"),
+                           imds_application=declared)
         if resume:
             record("resumed", completed=sorted(done_uids), material_refs={k: list(v) for k, v in refs.items()})
         try:

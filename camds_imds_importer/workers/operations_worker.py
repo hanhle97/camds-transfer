@@ -113,6 +113,37 @@ class OperationsWorker(QThread):
                          f"({len(found)} row(s)) and {len(classifications)} material "
                          "classification(s) were read. Nothing was created.")}
 
+    async def _note_session(self, context, status, authenticated: bool) -> bool:
+        """Report a change in the live session, and keep one that just started.
+
+        However the session was established - and the CAPTCHA means it is
+        usually typed into this window by hand, with no sign-in step to hook -
+        saving it the moment the page reads as authenticated is what lets the
+        next window start from it instead of asking again.
+        """
+        if status == SessionStatus.UNKNOWN:
+            return authenticated
+        became = status == SessionStatus.AUTHENTICATED
+        if became != authenticated or status == SessionStatus.EXPIRED:
+            if became:
+                await self._remember_session(context)
+            self.session_changed.emit(status.value)
+        return became
+
+    async def _remember_session(self, context) -> None:
+        """Write the signed-in cookies and localStorage where the next run reads them.
+
+        Only ever called once the live page says it is authenticated, so a
+        failed or abandoned sign-in never overwrites a working session.
+        """
+        try:
+            self.storage.parent.mkdir(parents=True, exist_ok=True)
+            await context.storage_state(path=self.storage)
+        except Exception as exc:
+            # Losing the saved session costs one more sign-in, not the run.
+            self.notice.emit("Could not save the CAMDS session for reuse "
+                             f"({str(exc).splitlines()[0]}); you may have to sign in again next time.")
+
     async def _login(self, page, credentials):
         result = await sign_in(
             page, credentials,
@@ -171,11 +202,7 @@ class OperationsWorker(QThread):
                     if task is None and now >= next_poll and not operations.editor_open:
                         # Read the live page rather than trusting an earlier login.
                         status = await session_status(page, was_authenticated=authenticated)
-                        if status != SessionStatus.UNKNOWN:
-                            became = status == SessionStatus.AUTHENTICATED
-                            if became != authenticated or status == SessionStatus.EXPIRED:
-                                authenticated = became
-                                self.session_changed.emit(status.value)
+                        authenticated = await self._note_session(context, status, authenticated)
                         next_poll = now + SESSION_POLL_SECONDS
                     if task is None:
                         try:
@@ -220,4 +247,8 @@ class OperationsWorker(QThread):
                 if task is not None and not task.done():
                     task.cancel()
                     await asyncio.gather(task, return_exceptions=True)
+                if authenticated and not page.is_closed() and browser.is_connected():
+                    # CAMDS can hand out a fresh cookie during the session, so
+                    # the last state is worth more than the one saved at sign-in.
+                    await self._remember_session(context)
                 await browser.close()

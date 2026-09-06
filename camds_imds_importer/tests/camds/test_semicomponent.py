@@ -251,13 +251,13 @@ class SemiRecorder:
         if path[-1] == "Steel":
             self.ref = ("CA_8_m", "0.01")
 
-    async def add_component(self, path, node, at=(0, 1)):
+    async def add_component(self, path, node, at=(0, 1), reuse_index=None):
         self.calls.append(("component", node["uid"]))
 
-    async def add_semicomponent(self, path, node, at=(0, 1), by_portion=False):
+    async def add_semicomponent(self, path, node, at=(0, 1), by_portion=False, reuse_index=None):
         self.calls.append(("semicomponent", node["uid"], by_portion))
 
-    async def add_material(self, path, node, ref, at=(0, 1), by_portion=False):
+    async def add_material(self, path, node, ref, at=(0, 1), by_portion=False, reuse_index=None):
         self.calls.append(("material", node["uid"]))
         self.portions.append(("add", "portion" if by_portion else "mass", node["name"]))
         self.ref = ref

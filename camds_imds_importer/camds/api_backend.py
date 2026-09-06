@@ -85,6 +85,7 @@ class ApiBackend:
         self._kind: dict[str, int | None] = {}   # strutsId -> nodeType
         self._text: dict[str, str] = {}          # strutsId -> label CAMDS shows
         self._cas: dict[str, str | None] = {}    # strutsId -> CAS, for Substances
+        self._mds: dict[str, str | None] = {}    # strutsId -> the MDS it points at
 
     # ------------------------------------------------------------- bookkeeping
     def _remember(self, path: tuple, struts_id: str) -> None:
@@ -128,6 +129,7 @@ class ApiBackend:
         # loadMdsTree carries the CAS, so a saved composition can be read back
         # and reconciled without loading every node.
         self._cas[struts_id] = node.get("cascode")
+        self._mds[struts_id] = node.get("mdsId")
         if node.get("cmatClsId"):
             self._classification[struts_id] = node["cmatClsId"]
         if (node.get("rf") or str(node.get("crefFlag") or "") == "1") and node.get("mdsId"):
@@ -221,48 +223,75 @@ class ApiBackend:
     async def save(self) -> None:
         await self.api.save(self.root.struts_id, self.root.mds_id)
 
-    async def add_component(self, parent_path, child, at=(0, 1)) -> None:
+    def _reuse(self, parent: str, index: int | None) -> str | None:
+        """The child already at this position, for a resumed run to fill again.
+
+        A run interrupted between creating a node and writing its fields leaves
+        it in the tree unnamed. Filling that one again is what lets a resume
+        finish, instead of adding a second node beside it.
+        """
+        if index is None:
+            return None
+        children = self._children.get(parent, [])
+        if index >= len(children):
+            raise CamdsApiError(f"CAMDS holds no child at position {index} to fill")
+        return children[index]
+
+    async def add_component(self, parent_path, child, at=(0, 1), reuse_index=None) -> None:
         parent = self._resolve(parent_path, at)
-        created = await self.api.add_component(self.root.mds_id, parent, self._next_index(parent))
-        self._adopt(parent, created.struts_id)
-        self._remember(tuple(parent_path) + (child["name"],), created.struts_id)
-        await self.api.set_fields(created.struts_id, {
+        struts_id = self._reuse(parent, reuse_index)
+        if struts_id is None:
+            created = await self.api.add_component(
+                self.root.mds_id, parent, self._next_index(parent))
+            struts_id = created.struts_id
+            self._adopt(parent, struts_id)
+        self._remember(tuple(parent_path) + (child["name"],), struts_id)
+        await self.api.set_fields(struts_id, {
             NAME: child["name"], **named(child.get("part_number")),
             MASS_PER_ITEM: number(child["weight_g"]), WEIGHT_UNIT: "g",
             # A number typed into a form reaches CAMDS as a string.
         }, relation={REL_QUANTITY: number(child["quantity"])}, **self._within(parent))
-        await self._load(created.struts_id)
+        await self._load(struts_id)
 
-    async def add_semicomponent(self, parent_path, child, at=(0, 1), by_portion=False) -> None:
+    async def add_semicomponent(self, parent_path, child, at=(0, 1), by_portion=False,
+                                reuse_index=None) -> None:
         """Insert a Semicomponent, declared by mass or - inside another
         Semicomponent - by portion, which is how the report declares it."""
         parent = self._resolve(parent_path, at)
-        created = await self.api.add_semicomponent(self.root.mds_id, parent, self._next_index(parent))
-        self._adopt(parent, created.struts_id)
-        self._remember(tuple(parent_path) + (child["name"],), created.struts_id)
+        struts_id = self._reuse(parent, reuse_index)
+        if struts_id is None:
+            created = await self.api.add_semicomponent(
+                self.root.mds_id, parent, self._next_index(parent))
+            struts_id = created.struts_id
+            self._adopt(parent, struts_id)
+        self._remember(tuple(parent_path) + (child["name"],), struts_id)
         # Mass and portion both live on the parent relation, as for a Material.
         relation = (portion(*self._portion(child)) if by_portion
                     else {REL_MASS: number(child["weight_g"]), REL_MASS_UNIT: "g"})
-        await self.api.set_fields(created.struts_id, {
+        await self.api.set_fields(struts_id, {
             NAME: child["name"], **named(child.get("part_number")),
         }, relation=relation, **self._within(parent))
-        await self._load(created.struts_id)
+        await self._load(struts_id)
 
-    async def add_material(self, parent_path, node, ref, at=(0, 1), by_portion=False) -> str:
+    async def add_material(self, parent_path, node, ref, at=(0, 1), by_portion=False,
+                           reuse_index=None) -> str:
         parent = self._resolve(parent_path, at)
-        attached = await self.api.attach_mds(
-            root_struts_id=self.root.struts_id, root_mds=self.root.mds_id, mds_id=ref[0],
-            parent_struts_id=parent, index=self._next_index(parent))
-        self._adopt(parent, attached.struts_id)
-        await self._load(attached.struts_id)
-        display = (self.view["data"] or {}).get(NAME) or attached.text
-        self._remember(tuple(parent_path) + (display,), attached.struts_id)
+        struts_id = self._reuse(parent, reuse_index)
+        if struts_id is None:
+            attached = await self.api.attach_mds(
+                root_struts_id=self.root.struts_id, root_mds=self.root.mds_id, mds_id=ref[0],
+                parent_struts_id=parent, index=self._next_index(parent))
+            struts_id = attached.struts_id
+            self._adopt(parent, struts_id)
+        await self._load(struts_id)
+        display = (self.view["data"] or {}).get(NAME) or self._text.get(struts_id, "")
+        self._remember(tuple(parent_path) + (display,), struts_id)
         if by_portion:
             relation = portion(*self._portion(node))
         else:
             relation = {REL_MASS: number(node["weight_g"]), REL_MASS_UNIT: "g"}
-        await self.api.set_relation(attached.struts_id, relation, **self._within(parent))
-        await self._load(attached.struts_id)
+        await self.api.set_relation(struts_id, relation, **self._within(parent))
+        await self._load(struts_id)
         return display
 
     @staticmethod
@@ -327,7 +356,7 @@ class ApiBackend:
         self.root = TreeNode.from_payload(tree)
         self._paths, self._children, self._classification = {}, {}, {}
         self._referenced, self._kind = {}, {}
-        self._text, self._cas = {}, {}
+        self._text, self._cas, self._mds = {}, {}, {}
         self._map_tree(tree)
         await self._load(addressable(tree["id"]))
 
@@ -343,7 +372,8 @@ class ApiBackend:
         interrupted after the write but before the journal entry.
         """
         parent = self._resolve(path, at) if path else self.current
-        return [{"name": self._text.get(child, ""), "cas": self._cas.get(child)}
+        return [{"name": self._text.get(child, ""), "cas": self._cas.get(child),
+                 "mds": self._mds.get(child)}
                 for child in self._children.get(parent, [])]
 
     async def select(self, path, at=(0, 1)) -> None:

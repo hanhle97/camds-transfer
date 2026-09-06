@@ -217,10 +217,10 @@ class FakeDraftBrowser:
         if hasattr(self, "addressed"):
             self.addressed.append(("semi", tuple(path), at))
 
-    async def add_component(self, path, node, at=(0, 1)):
+    async def add_component(self, path, node, at=(0, 1), reuse_index=None):
         self.calls.append(("child", node["uid"]))
 
-    async def add_material(self, path, node, ref, at=(0, 1), by_portion=False):
+    async def add_material(self, path, node, ref, at=(0, 1), by_portion=False, reuse_index=None):
         self.calls.append(("reference", node["uid"]))
         self.current_ref = ref
         return "Steel"

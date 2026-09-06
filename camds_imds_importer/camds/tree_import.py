@@ -205,7 +205,10 @@ class DraftBrowser:
         node = await self.tree_node(path, at)
         await expect(node.locator('xpath=./ul/li[@treenode]')).to_have_count(count)
 
-    async def add_component(self, parent_path, child, at=(0, 1)):
+    async def add_component(self, parent_path, child, at=(0, 1), reuse_index=None):
+        if reuse_index is not None:
+            raise RuntimeError("Filling a node an interrupted run left behind needs the JSON API backend")
+
         await self.select(parent_path, at)
         await self.page.locator('img[title="Add Component"]').click()
         await self.settled()
@@ -216,7 +219,8 @@ class DraftBrowser:
         await self.fill("Measured Mass per Item", number(child["weight_g"]))
         await self.fill("Quantity", number(child["quantity"]))
 
-    async def add_semicomponent(self, parent_path, child, at=(0, 1), by_portion=False):
+    async def add_semicomponent(self, parent_path, child, at=(0, 1), by_portion=False,
+                                reuse_index=None):
         """Insert a Semicomponent under the selected Component.
 
         Verified control: img[title="Add SemiComponent"] (alt 添加半成品部件).
@@ -224,6 +228,8 @@ class DraftBrowser:
         CAMDS shows no Quantity here, and stale details from the previously
         selected node stay visible for a moment, so the Type is checked first.
         """
+        if reuse_index is not None:
+            raise RuntimeError("Filling a node an interrupted run left behind needs the JSON API backend")
         if by_portion:
             # A nested Semicomponent is declared by portion. Which control the
             # browser offers for that has never been observed, so this backend
@@ -263,7 +269,11 @@ class DraftBrowser:
         await dialog.wait_for(state="hidden", timeout=30_000)
         await self.settled()
 
-    async def add_material(self, parent_path, node, ref, at=(0, 1), by_portion=False):
+    async def add_material(self, parent_path, node, ref, at=(0, 1), by_portion=False,
+                           reuse_index=None):
+        if reuse_index is not None:
+            raise RuntimeError("Filling a node an interrupted run left behind needs the JSON API backend")
+
         """Attach an existing Material to the selected parent.
 
         CAMDS asks for a different quantity depending on the parent: a Material
@@ -412,6 +422,19 @@ class DraftBrowser:
         await self.verify_proportion(node)
 
 
+def _child_is(child, present, refs):
+    """Whether the node CAMDS already holds at this position is this child.
+
+    A Material is identified by the MDS it points at, which cannot drift; a
+    Component or Semicomponent by the name that was written into it, so a node
+    created but never named does not pass for a finished one.
+    """
+    if child["node_type"] == "MATERIAL":
+        ref = refs.get(child["uid"])
+        return bool(ref) and str(present.get("mds") or "") == ref[0]
+    return str(present.get("name") or "").strip() == str(child["name"]).strip()
+
+
 def _already_saved(substance, held):
     """The name CAMDS shows for this substance if it is already in the Material.
 
@@ -468,7 +491,7 @@ class TreeImporter:
                 "Re-entering a saved draft editor needs an open-saved-MDS-for-editing flow that has not been "
                 "discovered against CAMDS. Finish or discard them in CAMDS, then map them as existing Material "
                 "references and start a new import.")
-        if state.root_ref is not None:
+        if state.root_ref is not None and not can_reenter:
             raise RuntimeError(
                 "Cannot resume: the parent Component " + "/".join(state.root_ref) + " was already created. "
                 "Re-entering a saved draft editor needs an open-saved-MDS-for-editing flow that has not been "
@@ -648,35 +671,65 @@ class TreeImporter:
                     return occurrence, seen[path]
                 await gate()
                 reporter.step(root["uid"], root["name"], "COMPONENT")
-                record("create_parent_requested", uid=root["uid"], name=root["name"])
-                root_ref = await self.io.create_root(root, on_allocated=lambda allocated: record(
-                    "parent_id_allocated", uid=root["uid"], ref=allocated))
-                await save(root["uid"])
+                resuming_tree = state.root_ref is not None
+                if resuming_tree:
+                    root_ref = await self.io.create_root(root, existing=state.root_ref)
+                    record("parent_resumed", uid=root["uid"], ref=root_ref, name=root["name"])
+                else:
+                    record("create_parent_requested", uid=root["uid"], name=root["name"])
+                    root_ref = await self.io.create_root(root, on_allocated=lambda allocated: record(
+                        "parent_id_allocated", uid=root["uid"], ref=allocated))
+                    await save(root["uid"])
                 reporter.done()
 
                 async def build(node, path):
-                    for child in node["children"]:
+                    # Children are added in document order, so what CAMDS already
+                    # holds under a node is a prefix of what belongs there. Each
+                    # one is checked rather than counted: a run interrupted
+                    # between creating a node and naming it leaves an unnamed
+                    # node, and that one is filled again instead of skipped.
+                    held = await self.io.saved_children(path, at=at(node["uid"])) if resuming_tree else []
+                    for index, child in enumerate(node["children"]):
                         await gate()
+                        present = held[index] if index < len(held) else None
+                        done = present is not None and _child_is(child, present, refs)
+                        reuse = index if present is not None and not done else None
                         if child["node_type"] in ("COMPONENT", "SEMICOMPONENT"):
                             semi = child["node_type"] == "SEMICOMPONENT"
                             reporter.step(child["uid"], child["name"], child["node_type"], path)
+                            if done:
+                                record("child_already_saved", uid=child["uid"], name=child["name"])
+                                reporter.done()
+                                reporter("skipped_completed")
+                                await build(child, path + [child["name"]])
+                                continue
                             record("add_semicomponent_requested" if semi else "add_child_requested",
-                                   uid=child["uid"], name=child["name"])
+                                   uid=child["uid"], name=child["name"], refilled=reuse is not None)
                             if semi:
                                 # Inside another Semicomponent it is a portion.
                                 await self.io.add_semicomponent(
                                     path, child, at=at(node["uid"]),
-                                    by_portion=node["node_type"] == "SEMICOMPONENT")
+                                    by_portion=node["node_type"] == "SEMICOMPONENT",
+                                    reuse_index=reuse)
                             else:
-                                await self.io.add_component(path, child, at=at(node["uid"]))
+                                await self.io.add_component(path, child, at=at(node["uid"]),
+                                                            reuse_index=reuse)
                             await save(child["uid"])
                             reporter.done()
                             await build(child, path + [child["name"]])
                         else:
                             reporter.step(child["uid"], child["name"], "MATERIAL", path)
-                            record("attach_material_requested", uid=child["uid"], ref=refs[child["uid"]])
+                            if done:
+                                record("material_already_attached", uid=child["uid"],
+                                       ref=refs[child["uid"]])
+                                reporter.done()
+                                reporter("skipped_completed")
+                                continue
+                            record("attach_material_requested", uid=child["uid"],
+                                   ref=refs[child["uid"]], refilled=reuse is not None)
                             await self.io.add_material(path, child, refs[child["uid"]], at=at(node["uid"]),
-                                                       by_portion=node["node_type"] == "SEMICOMPONENT")
+                                                       by_portion=node["node_type"] == "SEMICOMPONENT",
+                                                       reuse_index=reuse)
                             await save(child["uid"])
                             reporter.done()
                 await build(root, [root["name"]])

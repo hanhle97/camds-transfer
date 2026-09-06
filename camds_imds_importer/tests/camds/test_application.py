@@ -195,10 +195,10 @@ class ApplicationBrowser:
         if path[-1] == "Steel":
             self.ref = ("CA_8_m", "0.01")
 
-    async def add_component(self, path, node, at=(0, 1)):
+    async def add_component(self, path, node, at=(0, 1), reuse_index=None):
         pass
 
-    async def add_material(self, path, node, ref, at=(0, 1), by_portion=False):
+    async def add_material(self, path, node, ref, at=(0, 1), by_portion=False, reuse_index=None):
         self.ref = ref
         return node["name"]
 

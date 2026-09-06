@@ -4,6 +4,7 @@ The stand-in keeps the shapes the recorded sessions show: nodes addressed by
 strutsId, a record under `data`, the parent relation under `structureVO`, and a
 save that addresses the root.
 """
+import copy
 import json
 
 import pytest
@@ -93,7 +94,9 @@ class FakeCamds:
             # ever accepts the bare one; the prefixed id is refused.
             if params["strutsId"] not in self.nodes:
                 raise AssertionError(f"loadNodeDate refused {params['strutsId']}")
-            return dict(self.nodes[params["strutsId"]])
+            # A copy all the way down: a shallow one would let the client mutate
+            # the stored node just by loading it, so a missing write would pass.
+            return copy.deepcopy(self.nodes[params["strutsId"]])
         if url.endswith("editNodeDate"):
             sid = body["editedStructId"]
             for key in ("data", "structureVO"):
@@ -559,3 +562,75 @@ async def test_resume_recognises_a_system_group_camds_relabelled(tmp_path):
     await TreeImporter(backend(camds), tmp_path).run(ImportRequest(root), resume=True)
     saved = [n for n in camds.nodes.values() if n["treeDataNode"]["nodeType"] == 4]
     assert len(saved) == 2, "the relabelled group must not be added a second time"
+
+
+def _components(camds):
+    return [n for n in camds.nodes.values() if n["treeDataNode"]["nodeType"] == 1]
+
+
+async def test_resume_continues_the_parent_instead_of_spending_a_second_id(tmp_path):
+    """The parent Component was allocated; a second run must reopen that MDS."""
+    camds = FakeCamds()
+    original = camds._route
+
+    def refuse_the_child(url, params, body):
+        if url.endswith("addComponentNodeToTree"):
+            raise CamdsApiError("addComponentNodeToTree refused: 程序异常")
+        return original(url, params, body)
+
+    camds._route = refuse_the_child
+    with pytest.raises(CamdsApiError):
+        await TreeImporter(backend(camds), tmp_path).run(ImportRequest(tree()))
+    roots = [n["treeDataNode"]["mdsId"] for n in _components(camds)]
+    assert len(roots) == 1, "only the parent exists so far"
+
+    camds._route = original
+    result = await TreeImporter(backend(camds), tmp_path).run(ImportRequest(tree()), resume=True)
+    assert result["identity"].split("/")[0] == roots[0], "the same MDS was finished"
+    assert len(_components(camds)) == 2, "parent plus the one child, no duplicate parent"
+
+
+async def test_resume_does_not_add_a_second_copy_of_a_child_already_saved(tmp_path):
+    """Failing after the child is written must not duplicate it."""
+    camds = FakeCamds()
+    original = camds._route
+
+    def refuse_the_material(url, params, body):
+        if url.endswith("substituteMdsNode"):
+            raise CamdsApiError("substituteMdsNode refused: 程序异常")
+        return original(url, params, body)
+
+    camds._route = refuse_the_material
+    with pytest.raises(CamdsApiError):
+        await TreeImporter(backend(camds), tmp_path).run(ImportRequest(tree()))
+    assert len(_components(camds)) == 2, "parent and child were written before the failure"
+
+    camds._route = original
+    await TreeImporter(backend(camds), tmp_path).run(ImportRequest(tree()), resume=True)
+    assert len(_components(camds)) == 2, "the saved child must not be added again"
+    events = [json.loads(line) for line in next(tmp_path.glob("*.jsonl")).read_text(
+        encoding="utf-8").splitlines()]
+    assert any(e["event"] == "child_already_saved" and e["name"] == "Child" for e in events)
+
+
+async def test_resume_fills_a_node_an_interrupted_run_left_unnamed(tmp_path):
+    """Created but never named. Skipping it on position alone would leave the
+    tree wrong; it is recognised by its name and written again."""
+    camds = FakeCamds()
+    original = camds._route
+
+    def refuse_naming_the_child(url, params, body):
+        if url.endswith("editNodeDate") and (body["view"]["data"] or {}).get("cname") == "Child":
+            raise CamdsApiError("editNodeDate refused: 程序异常")
+        return original(url, params, body)
+
+    camds._route = refuse_naming_the_child
+    with pytest.raises(CamdsApiError):
+        await TreeImporter(backend(camds), tmp_path).run(ImportRequest(tree()))
+    unnamed = [n for n in _components(camds) if not n["data"].get("cname")]
+    assert len(unnamed) == 1, "the child exists but carries no name"
+
+    camds._route = original
+    await TreeImporter(backend(camds), tmp_path).run(ImportRequest(tree()), resume=True)
+    assert len(_components(camds)) == 2, "no second child beside the unnamed one"
+    assert sorted(n["data"]["cname"] for n in _components(camds)) == ["Child", "Parent"]

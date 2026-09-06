@@ -212,7 +212,7 @@ class DraftBrowser:
         await self.fill("Measured Mass per Item", number(child["weight_g"]))
         await self.fill("Quantity", number(child["quantity"]))
 
-    async def add_semicomponent(self, parent_path, child, at=(0, 1)):
+    async def add_semicomponent(self, parent_path, child, at=(0, 1), by_portion=False):
         """Insert a Semicomponent under the selected Component.
 
         Verified control: img[title="Add SemiComponent"] (alt 添加半成品部件).
@@ -220,6 +220,14 @@ class DraftBrowser:
         CAMDS shows no Quantity here, and stale details from the previously
         selected node stay visible for a moment, so the Type is checked first.
         """
+        if by_portion:
+            # A nested Semicomponent is declared by portion. Which control the
+            # browser offers for that has never been observed, so this backend
+            # stops rather than typing into a field it has not seen.
+            raise RuntimeError(
+                f"{child['name']}: a Semicomponent inside a Semicomponent is declared by "
+                "portion, and no browser control for that has been discovered. Import over "
+                "the API instead.")
         await self.select(parent_path, at)
         await self.page.locator('img[title="Add SemiComponent"]').click()
         await self.settled()
@@ -587,8 +595,13 @@ class TreeImporter:
                             reporter.step(child["uid"], child["name"], child["node_type"], path)
                             record("add_semicomponent_requested" if semi else "add_child_requested",
                                    uid=child["uid"], name=child["name"])
-                            adder = self.io.add_semicomponent if semi else self.io.add_component
-                            await adder(path, child, at=at(node["uid"]))
+                            if semi:
+                                # Inside another Semicomponent it is a portion.
+                                await self.io.add_semicomponent(
+                                    path, child, at=at(node["uid"]),
+                                    by_portion=node["node_type"] == "SEMICOMPONENT")
+                            else:
+                                await self.io.add_component(path, child, at=at(node["uid"]))
                             await save(child["uid"])
                             reporter.done()
                             await build(child, path + [child["name"]])
@@ -604,14 +617,18 @@ class TreeImporter:
                 reporter("verify_started")
                 await self.io.open_saved("Component", root_ref)
 
-                async def verify(node, path):
+                async def verify(node, path, within=None):
                     await self.io.select(path, at=at(node["uid"]))
                     await self.io.verify_child_count(path, len(node["children"]), at=at(node["uid"]))
                     await self.io.verify_value("Article Name", node["name"])
                     if node["node_type"] == "SEMICOMPONENT":
-                        # A Semicomponent carries a Mass and no Quantity.
+                        # A Semicomponent carries a Mass and no Quantity, unless
+                        # it sits in another one, where it carries a portion.
                         await self.io.verify_value("Semicomponent No.", node.get("part_number") or "")
-                        await self.io.verify_value("Mass", float(node["weight_g"]))
+                        if within == "SEMICOMPONENT":
+                            await self.io.verify_proportion(node, "Semicomponent")
+                        else:
+                            await self.io.verify_value("Mass", float(node["weight_g"]))
                     else:
                         await self.io.verify_value("Component No.", node.get("part_number") or "")
                         await self.io.verify_value("Measured Mass per Item", float(node["weight_g"]))
@@ -619,7 +636,7 @@ class TreeImporter:
                             await self.io.verify_value("Quantity", float(node["quantity"]))
                     for child in node["children"]:
                         if child["node_type"] in ("COMPONENT", "SEMICOMPONENT"):
-                            await verify(child, path + [child["name"]])
+                            await verify(child, path + [child["name"]], node["node_type"])
                         else:
                             await self.io.select(path + [names[child["uid"]]], at=at(child["uid"]))
                             if await self.io.identity() != tuple(refs[child["uid"]]):

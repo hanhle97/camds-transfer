@@ -1,8 +1,12 @@
 """Semicomponent support, per SEMICOMPONENT_APPLICATION_DISCOVERY.md.
 
 Inserting the Semicomponent itself is verified: no reference dialog, a Mass and
-a Semicomponent No., no Quantity. Attaching a Material *inside* one is not, so
-it stays blocked rather than guessed.
+a Semicomponent No., no Quantity.
+
+A Semicomponent inside another one is declared by portion, not by mass - the
+report gives "Contact Bimetal | 20291057 | Rest 98.74" and no weight at all.
+The API writes that portion; the browser backend has no observed control for
+it and refuses.
 """
 import pytest
 from playwright.async_api import async_playwright
@@ -36,13 +40,25 @@ def test_a_component_may_contain_a_semicomponent():
     ImportRequest(tree([dict(material(), weight_g=None, percentage=100.0)])).validate()
 
 
-def test_a_semicomponent_inside_a_semicomponent_is_refused_rather_than_guessed():
-    # The toolbar offers it, but nested insertion was never exercised and such a
-    # node is declared by portion, so its input is unknown.
-    root = tree([semicomponent([dict(material(), weight_g=None, percentage=100.0)],
-                               uid="inner", name="Inner film")])
-    with pytest.raises(ValueError, match="Semicomponent inside a Semicomponent is not verified"):
-        ImportRequest(root).validate()
+def _nested(**portion):
+    inner = semicomponent([dict(material(), weight_g=None, percentage=100.0)],
+                          uid="inner", name="Inner film")
+    inner["weight_g"] = None
+    inner.update(portion)
+    return tree([inner])
+
+
+def test_a_semicomponent_inside_a_semicomponent_is_declared_by_portion():
+    """"Rest 98.74" and no mass: the report declares it the way a Material there
+    is declared, so a mass is not what is missing."""
+    ImportRequest(_nested(is_rest=True, percentage=98.74)).validate()
+    ImportRequest(_nested(percentage=1.26)).validate()
+
+
+def test_a_nested_semicomponent_without_a_portion_is_still_refused():
+    problems = str(pytest.raises(ValueError, ImportRequest(_nested()).validate).value)
+    assert "Fixed, Range, Rest" in problems
+    assert "mass" not in problems, "a nested Semicomponent is never asked for a mass"
 
 
 def test_a_semicomponent_needs_a_mass_but_never_a_quantity():
@@ -232,8 +248,8 @@ class SemiRecorder:
     async def add_component(self, path, node, at=(0, 1)):
         self.calls.append(("component", node["uid"]))
 
-    async def add_semicomponent(self, path, node, at=(0, 1)):
-        self.calls.append(("semicomponent", node["uid"]))
+    async def add_semicomponent(self, path, node, at=(0, 1), by_portion=False):
+        self.calls.append(("semicomponent", node["uid"], by_portion))
 
     async def add_material(self, path, node, ref, at=(0, 1), by_portion=False):
         self.calls.append(("material", node["uid"]))
@@ -247,7 +263,8 @@ async def test_the_whole_semicomponent_relation_runs_and_reads_back(tmp_path):
     root = tree([dict(material(), weight_g=None, percentage=100.0)])
     backend = SemiRecorder()
     await TreeImporter(backend, tmp_path).run(ImportRequest(root))
-    assert [c for c in backend.calls if c[0] != "save"] == [("semicomponent", "sc"), ("material", "m")]
+    assert [c for c in backend.calls if c[0] != "save"] == [("semicomponent", "sc", False),
+                                                           ("material", "m")]
     # Written as a portion, and read back as a portion, never as a mass.
     assert backend.portions == [("add", "portion", "Steel"), ("verify", "Material", "Steel")]
     assert backend.verified["Semicomponent No."] == "PP539-LN"
@@ -262,3 +279,26 @@ async def test_a_material_under_a_component_is_still_written_as_a_mass(tmp_path)
     await TreeImporter(backend, tmp_path).run(ImportRequest(root))
     assert backend.portions == [("add", "mass", "Steel")]
     assert backend.verified["Mass"] == 1.0
+
+
+async def test_a_nested_semicomponent_is_written_and_read_back_as_a_portion(tmp_path):
+    """The whole nested relation: no mass is written, and none is verified."""
+    from camds_imds_importer.camds.tree_import import TreeImporter
+
+    backend = SemiRecorder()
+    await TreeImporter(backend, tmp_path).run(
+        ImportRequest(_nested(is_rest=True, percentage=98.74)))
+
+    assert ("semicomponent", "inner", True) in backend.calls
+    assert ("semicomponent", "sc", False) in backend.calls, "the outer one still carries a mass"
+    assert ("verify", "Semicomponent", "Inner film") in backend.portions
+    assert backend.verified["Mass"] == 1.0, "only the outer Semicomponent's mass"
+
+
+async def test_the_browser_backend_refuses_a_nested_semicomponent():
+    """No control for a nested portion has been observed, so it fails closed."""
+    from camds_imds_importer.camds.tree_import import DraftBrowser
+
+    browser = DraftBrowser.__new__(DraftBrowser)
+    with pytest.raises(RuntimeError, match="no browser control"):
+        await browser.add_semicomponent(["Label"], {"name": "Inner film"}, by_portion=True)

@@ -209,14 +209,17 @@ class ImportRequest:
                     fail(f"{label}: Component has no children")
             if kind == "SEMICOMPONENT":
                 if parent and parent.get("node_type") == "SEMICOMPONENT":
-                    # Inserting a Semicomponent inside another one was listed on
-                    # the toolbar but never exercised, and such a node is declared
-                    # by portion rather than mass, so its input is unknown.
-                    fail(f"{label}: a Semicomponent inside a Semicomponent is not verified yet")
-                    return
-                # CAMDS shows no Quantity field for a Semicomponent under a
-                # Component, so its mass counts once.
-                measure(node.get("weight_g"), name + " mass", positive=True)
+                    # A Semicomponent inside a Semicomponent is declared by
+                    # portion, exactly as a Material there is: the report gives
+                    # "Contact Bimetal | 20291057 | Rest 98.74" and no mass.
+                    try:
+                        proportion(node)
+                    except (ValueError, TypeError, KeyError) as exc:
+                        fail(str(exc))
+                else:
+                    # CAMDS shows no Quantity field for a Semicomponent under a
+                    # Component, so its mass counts once.
+                    measure(node.get("weight_g"), name + " mass", positive=True)
                 if not node.get("children"):
                     fail(f"{label}: Semicomponent has no children")
             if kind == "MATERIAL":

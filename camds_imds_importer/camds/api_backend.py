@@ -203,16 +203,19 @@ class ApiBackend:
         }, relation={REL_QUANTITY: number(child["quantity"])}, **self._within(parent))
         await self._load(created.struts_id)
 
-    async def add_semicomponent(self, parent_path, child, at=(0, 1)) -> None:
+    async def add_semicomponent(self, parent_path, child, at=(0, 1), by_portion=False) -> None:
+        """Insert a Semicomponent, declared by mass or - inside another
+        Semicomponent - by portion, which is how the report declares it."""
         parent = self._resolve(parent_path, at)
         created = await self.api.add_semicomponent(self.root.mds_id, parent, self._next_index(parent))
         self._adopt(parent, created.struts_id)
         self._remember(tuple(parent_path) + (child["name"],), created.struts_id)
-        # Mass in the parent is a relation property, as it is for a Material.
+        # Mass and portion both live on the parent relation, as for a Material.
+        relation = (portion(*self._portion(child)) if by_portion
+                    else {REL_MASS: number(child["weight_g"]), REL_MASS_UNIT: "g"})
         await self.api.set_fields(created.struts_id, {
             NAME: child["name"], **named(child.get("part_number")),
-        }, relation={REL_MASS: number(child["weight_g"]), REL_MASS_UNIT: "g"},
-            **self._within(parent))
+        }, relation=relation, **self._within(parent))
         await self._load(created.struts_id)
 
     async def add_material(self, parent_path, node, ref, at=(0, 1), by_portion=False) -> str:

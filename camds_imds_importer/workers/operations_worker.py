@@ -15,11 +15,12 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 from playwright.async_api import async_playwright
 
-from ..camds.api import CamdsApi
+from ..camds.api import CamdsApi, CamdsApiError
 from ..camds.api_backend import ApiBackend
 from ..camds.action_policy import CamdsAction, SensitiveActionBlocked, require_action_confirmation
 from ..camds.discovery import discover_material_classifications
 from ..camds.import_control import ImportControl
+from ..camds.import_plan import MAX_REPORTED_ERRORS
 from ..camds.login import LoginStatus
 from ..camds.operations import CamdsOperations, SEARCH_URL
 from ..camds.session import SessionStatus, session_status, sign_in
@@ -43,6 +44,7 @@ ACTION_POLICY = {
     "leave_editor": CamdsAction.OPEN,
     "discover_classifications": CamdsAction.READ,
     "api_check": CamdsAction.READ,
+    "check_substances": CamdsAction.SEARCH,
     "import_tree": CamdsAction.SAVE_DRAFT,
 }
 
@@ -112,6 +114,38 @@ class OperationsWorker(QThread):
                 "note": (f"CAMDS API reachable on this session: search answered "
                          f"({len(found)} row(s)) and {len(classifications)} material "
                          "classification(s) were read. Nothing was created.")}
+
+    async def _check_substances(self, context, request):
+        """Look up every distinct substance this import needs. Read-only.
+
+        An unresolved substance stops a run - a Material missing part of itself
+        is wrong data, not incomplete data - and the real tree spends hours
+        before it reaches most of them. The same lookup the import performs is
+        run here first, so the whole list is known in minutes with nothing
+        created.
+        """
+        backend = ApiBackend(CamdsApi(context.request))
+        request = request.snapshot()
+        nodes = request.substance_lookups()
+        unresolved = []
+        for index, node in enumerate(nodes, start=1):
+            if self.stopping.is_set():
+                break
+            if index % 20 == 0 or index == len(nodes):
+                self.operation_progress.emit(
+                    f"CAMDS: checking substance {index}/{len(nodes)}…")
+            try:
+                await backend.resolve_substance(node)
+            except CamdsApiError as exc:
+                unresolved.append(str(exc))
+        note = (f"Checked {len(nodes)} distinct substance lookup(s) for "
+                f"{len(request.materials())} Material(s). Nothing was created. ")
+        note += ("Every one resolved to exactly one CAMDS entry."
+                 if not unresolved else
+                 f"{len(unresolved)} did not resolve and would stop an import.")
+        return {"kind": "check_substances", "identity": "", "editor_open": False,
+                "note": note, "warnings": unresolved[:MAX_REPORTED_ERRORS],
+                "skipped": []}
 
     async def _note_session(self, context, status, authenticated: bool) -> bool:
         """Report a change in the live session, and keep one that just started.
@@ -222,6 +256,7 @@ class OperationsWorker(QThread):
                                     "leave_editor": "Leaving the editor…",
                                     "discover_classifications": "Recording the classification wizard…",
                                     "api_check": "Checking the CAMDS API session…",
+                                    "check_substances": "Checking every substance in the catalogue…",
                                     "import_tree": "Importing parsed tree…", "login": "Signing in…"}[action])
                                 if action == "import_tree":
                                     # Reset in place: the UI already holds this object.
@@ -235,6 +270,8 @@ class OperationsWorker(QThread):
                                     task = asyncio.create_task(importer.run(request, resume=options.get("resume", False)))
                                 elif action == "api_check":
                                     task = asyncio.create_task(self._api_check(context))
+                                elif action == "check_substances":
+                                    task = asyncio.create_task(self._check_substances(context, request))
                                 elif action == "discover_classifications":
                                     task = asyncio.create_task(discover_material_classifications(
                                         operations, Path("debug") / "material-classifications"))

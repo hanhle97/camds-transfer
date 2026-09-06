@@ -392,6 +392,28 @@ class ImportRequest:
         visit(self.root)
         return found
 
+    def substance_lookups(self):
+        """One entry per distinct catalogue lookup this import will perform.
+
+        5764 Substance nodes in the real tree resolve to about 200 searches: the
+        same CAS or the same name appears again and again. Checking those few is
+        what makes it possible to find out, in minutes and without creating
+        anything, whether a run of several hours would stop on one of them.
+        """
+        seen, found = set(), []
+        for material in self.materials():
+            if material.get("uid") in self.material_refs:
+                continue  # its composition is not ours to write
+            for node in material.get("children", []):
+                if node.get("node_type") != "SUBSTANCE":
+                    continue
+                cas = real_cas(node)
+                key = ("cas", cas) if cas else ("name", str(node.get("name") or "").strip())
+                if key not in seen:
+                    seen.add(key)
+                    found.append(node)
+        return found
+
     def materials(self):
         result = []
         def visit(n):

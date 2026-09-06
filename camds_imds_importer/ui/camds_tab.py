@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..camds.import_control import brief
+from ..camds.import_plan import ImportRequest
 from ..camds.material_classifications import classification_code, describe, known_codes, sort_key
 from ..camds.operations import SearchRequest, CreateRequest, KINDS
 from ..workers.operations_worker import OperationsWorker
@@ -45,6 +46,12 @@ class CamdsTab(QWidget):
         bar.addWidget(self.import_tree_button)
         self.api_button = QPushButton("Test API session")
         bar.addWidget(self.api_button)
+        self.check_substances_button = QPushButton("Check substances")
+        self.check_substances_button.setToolTip(
+            "Look up every distinct substance of the parsed tree in the CAMDS catalogue. "
+            "Read-only: nothing is created. An unresolved substance stops an import, and "
+            "this finds them all in minutes instead of hours in.")
+        bar.addWidget(self.check_substances_button)
         self.discover_button = QPushButton("Record classification wizard")
         bar.addWidget(self.discover_button)
         root.addLayout(bar)
@@ -116,6 +123,7 @@ class CamdsTab(QWidget):
         self.save_button.clicked.connect(self.save)
         self.leave_button.clicked.connect(self.leave_editor)
         self.api_button.clicked.connect(lambda: self._submit("api_check", None))
+        self.check_substances_button.clicked.connect(self.check_substances)
         self.discover_button.clicked.connect(self.discover_classifications)
         self.import_tree_button.clicked.connect(self.review_import)
         self.sign_in_button.clicked.connect(self.request_sign_in)
@@ -168,6 +176,15 @@ class CamdsTab(QWidget):
         dialog = ImportDialog(self.parsed_root, self)
         if dialog.exec() and dialog.request:
             self._submit("import_tree", dialog.request, resume=dialog.resume.isChecked())
+
+    def check_substances(self) -> None:
+        if self.parsed_root is None:
+            self.status.setText("Parse an IMDS PDF before checking its substances.")
+            return
+        if self.worker is None:
+            self.status.setText("Open a CAMDS browser session before checking substances.")
+            return
+        self._submit("check_substances", ImportRequest(self.parsed_root))
 
     def load_node(self) -> None:
         node = self.source_node.currentData()
@@ -344,10 +361,10 @@ class CamdsTab(QWidget):
             self.session_changed.emit(self.session)
         if result["kind"] == "import_tree":
             self.import_status.setText(f"Import complete: {result.get('nodes', 0)} / {result.get('total', 0)} steps verified.")
-            # An import that CAMDS accepted can still hold differences the
-            # operator has to see; a completed run must not bury them.
-            for finding in (result.get("warnings") or []) + (result.get("skipped") or []):
-                self.log_message.emit("Reported: " + finding)
+        # An operation that CAMDS accepted can still hold findings the operator
+        # has to see; a completed run must not bury them.
+        for finding in (result.get("warnings") or []) + (result.get("skipped") or []):
+            self.log_message.emit("Reported: " + finding)
         self.save_button.setEnabled(self.editor_open)
         if result["kind"] == "search":
             self.results.setColumnCount(len(result["columns"]))
@@ -404,6 +421,8 @@ class CamdsTab(QWidget):
         self.sign_in_button.setEnabled(idle and not self.editor_open)
         self.discover_button.setEnabled(idle and not self.editor_open)
         self.api_button.setEnabled(idle and not self.editor_open)
+        self.check_substances_button.setEnabled(
+            idle and not self.editor_open and self.parsed_root is not None)
         control = getattr(self.worker, "control", None)
         running = self.importing and control is not None and not stopping
         self.pause_button.setEnabled(running and not control.paused and not control.stopping)

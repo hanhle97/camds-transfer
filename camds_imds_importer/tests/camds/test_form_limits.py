@@ -67,3 +67,26 @@ async def test_a_name_camds_shortened_fails_read_back():
     await backend.verify_value("Material Name", LONG_NAME[:100])
     with pytest.raises(CamdsApiError, match="Read-back mismatch"):
         await backend.verify_value("Material Name", LONG_NAME)
+
+
+def test_the_catalogue_check_visits_each_lookup_once():
+    """5764 Substance nodes in the real tree are about 200 distinct searches, and
+    checking those few is what makes a read-only preflight possible at all."""
+    root = tree()
+    material = root["children"][0]
+    material["children"] = [
+        substance(uid="a", cas_number="7439-89-6"),
+        substance(uid="b", cas_number="7439-89-6", name="Iron, again"),   # same CAS
+        substance(uid="c", cas_number=None, name="Misc., not to declare"),
+        substance(uid="d", cas_number=None, name="Misc., not to declare"),  # same name
+        substance(uid="e", cas_number="7440-50-8", name="Copper"),
+    ]
+    lookups = ImportRequest(root).substance_lookups()
+    assert [n["uid"] for n in lookups] == ["a", "c", "e"]
+
+
+def test_a_mapped_material_is_not_looked_up():
+    """Its composition is not written, so its substances are never searched."""
+    root = tree()
+    request = ImportRequest(root, {"m": ("CA_8_1", "0.01")})
+    assert request.substance_lookups() == []

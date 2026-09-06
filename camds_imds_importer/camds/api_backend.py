@@ -301,7 +301,7 @@ class ApiBackend:
 
     async def add_substance(self, material_name, node) -> str:
         parent = self._resolve((material_name,))
-        found = await self._find_substance(node)
+        found = await self.resolve_substance(node)
         created = await self.api.add_substance(
             self.root.mds_id, parent, str(found[SEARCH_ID]), self._next_index(parent))
         self._adopt(parent, created.struts_id)
@@ -313,7 +313,7 @@ class ApiBackend:
         await self._load(created.struts_id)
         return display
 
-    async def _find_substance(self, node) -> dict:
+    async def resolve_substance(self, node) -> dict:
         """One exact catalogue match, by CAS when there is one and by name otherwise.
 
         A substance is the composition of its Material, so an unresolved one

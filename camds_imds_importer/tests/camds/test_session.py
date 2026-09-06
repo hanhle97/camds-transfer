@@ -48,7 +48,8 @@ async def test_sign_in_reuses_the_open_session_instead_of_logging_in_again(monke
 
 def test_every_dispatchable_action_is_classified_and_sensitive_ones_fail_closed():
     assert set(ACTION_POLICY) == {"login", "search", "create", "save", "leave_editor",
-                                  "discover_classifications", "api_check", "import_tree"}
+                                  "discover_classifications", "api_check", "import_tree",
+                                  "check_substances"}
     for action in ACTION_POLICY.values():
         require_action_confirmation(action)  # automatable actions need no confirmation
     for sensitive in (CamdsAction.DELETE, CamdsAction.SEND, CamdsAction.PROPOSE, CamdsAction.SUBMIT):

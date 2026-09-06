@@ -90,6 +90,13 @@ Tên có giới hạn 100 ký tự; mã 50; CICES 200; Remark 2000. Specific wei
 ban đầu disabled khi đơn vị là `-`. Material classification là input readonly.
 Các giới hạn này được đọc từ DOM, chưa kiểm thử validation phía máy chủ.
 
+**2026-09-06 — không dùng các giới hạn này để chặn import qua API.** Chúng là
+thuộc tính của form trình duyệt; đường JSON API không đi qua form đó. Preflight
+chỉ báo lại, không chặn. Điều khiến việc này an toàn: mọi tên và mã đều được
+đọc lại và so khớp đầy đủ sau khi lưu, nên nếu CAMDS thực sự cắt bớt thì
+read-back sẽ phát hiện; và một substance không khớp chính xác vẫn dừng cả lần
+chạy. Đường Playwright vẫn giữ nguyên giới hạn, vì ở đó maxlength là có thật.
+
 ## Ranh giới thao tác và phần còn chưa xác minh
 
 Không bấm Delete, Send, Submit, Save, upload hoặc Confirm thêm node.

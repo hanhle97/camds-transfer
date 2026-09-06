@@ -181,10 +181,14 @@ class ImportRequest:
             if not name.strip():
                 fail(f"{label}: name required")
             elif len(name) > 100 and kind != "SUBSTANCE":
-                # Component and Material names are typed into the CAMDS form.
-                # A Substance is looked up, and chemical names legitimately run
-                # far longer than any form field.
-                fail(f"{label}: name must not exceed 100 characters")
+                # 100 is a maxlength read from the browser form's DOM and never
+                # tested against the server, and the JSON API does not go
+                # through that form. Reported rather than refused, by decision:
+                # a name CAMDS truncates fails read-back, which compares the
+                # saved name to this one exactly, and the browser backend still
+                # refuses it before any id is allocated.
+                warn(f"{label}: name is {len(name)} characters; the CAMDS form accepts 100. "
+                     "Imported over the API as declared, and read back to catch truncation")
             if kind not in ("COMPONENT", "SEMICOMPONENT", "MATERIAL", "SUBSTANCE"):
                 fail(f"{label}: {kind} import is not yet supported")
                 return
@@ -274,8 +278,12 @@ class ImportRequest:
                 if not real_cas(node) and not name.strip():
                     fail(f"{label}: a substance needs either a CAS number or a name to look up")
                 elif not real_cas(node) and len(name) > 50:
-                    fail(f"{label}: no CAS, and the name exceeds the 50 characters the CAMDS "
-                         "substance search accepts")
+                    # Also a DOM limit, on the search box. The API search takes
+                    # the name as JSON. If CAMDS does cut it short the search
+                    # returns no exact match, and an unresolved substance still
+                    # stops the run, so nothing is imported on a guess.
+                    warn(f"{label}: no CAS, and the name is {len(name)} characters; the CAMDS "
+                         "search box accepts 50. Looked up over the API by the full name")
                 if node.get("children"):
                     fail(f"{label}: Substance cannot contain child nodes")
                 try:
@@ -284,7 +292,8 @@ class ImportRequest:
                     fail(str(exc))
             number = node.get("material_number") if kind == "MATERIAL" else node.get("part_number")
             if number and len(number) > 50:
-                fail(f"{label}: number exceeds 50 characters")
+                warn(f"{label}: number is {len(number)} characters; the CAMDS form accepts 50. "
+                     "Imported over the API as declared, and read back to catch truncation")
             allowed = {"COMPONENT": ("COMPONENT", "SEMICOMPONENT", "MATERIAL"),
                        # A Semicomponent holds Materials and nested Semicomponents.
                        "SEMICOMPONENT": ("SEMICOMPONENT", "MATERIAL")}.get(kind)

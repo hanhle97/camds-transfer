@@ -569,9 +569,10 @@ class TreeImporter:
             await self.io.save()
             record("save_returned_pending_readback", uid=uid)
 
-        if request.merges or warnings:
+        if request.merges or warnings or request.derived:
             # Recorded next to the allocated IDs so the run can be audited later.
-            journal.record("accepted_with_findings", merges=request.merges, warnings=warnings)
+            journal.record("accepted_with_findings", merges=request.merges, warnings=warnings,
+                           derived=request.derived)
         for node in request.node_applications():
             # No CAMDS control exists for an application on anything but a
             # Substance, so it is left unset. Recorded before the run touches
@@ -774,7 +775,7 @@ class TreeImporter:
                 journal.record("readback_findings", findings=found)
             return {"kind": "import_tree", "identity": "/".join(root_ref), "editor_open": False,
                     "nodes": reporter.completed, "total": reporter.total,
-                    "warnings": warnings + found, "merges": request.merges,
+                    "warnings": warnings + found + request.derived, "merges": request.merges,
                     "skipped": list(self.skipped),
                     "note": "Draft tree saved and verified through Search / View. No Send/Submit. Journal: " + str(journal.path)}
         except BaseException as exc:

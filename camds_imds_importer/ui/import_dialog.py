@@ -123,6 +123,15 @@ class ImportDialog(QDialog):
             lines.extend("  " + note for note in request.merges[:20])
             if len(request.merges) > 20:
                 lines.append(f"  ... and {len(request.merges) - 20} more")
+        if request.derived:
+            lines.append("")
+            # A value the report did not state is the one thing here that is
+            # ours rather than the supplier's, so it is listed on its own.
+            lines.append(f"{len(request.derived)} mass(es) worked out from what the node contains, "
+                         "because IMDS printed none:")
+            lines.extend("  " + note for note in request.derived[:20])
+            if len(request.derived) > 20:
+                lines.append(f"  ... and {len(request.derived) - 20} more")
         unmapped = self.mapping.missing(request.root)
         if unmapped:
             lines.append("")

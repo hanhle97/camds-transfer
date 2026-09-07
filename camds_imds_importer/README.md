@@ -100,7 +100,16 @@ including letter-suffixed ones such as `5.1.a`) with basic Substances, and
 explicit existing Material references. Material root imports are supported too. A Component's child
 Component mass is treated as per-item mass and multiplied by quantity; Material
 mass is the mass of its reference in the parent. Preflight requires totals to
-match within 0.1%; missing values are not guessed.
+match within 0.1%.
+
+One value is worked out rather than demanded: a Component mass IMDS printed
+nowhere. Some assembled rows carry no weight at all while every row around them
+does, and a Component's mass is what its contents weigh. It is filled in depth
+first, never over a declared value, and left blank if any child's own mass is
+unknown - understating a mass would be worse than refusing to state one. Every
+one is listed in the preview, journalled beside the allocated ids and reported
+with the result, because it is the one number in the tree that is ours rather
+than the supplier's. Nothing else missing is guessed.
 
 Material classifications come from `camds/material_classifications.json`, which
 is generated from a recorded run of the creation wizard: its first column holds

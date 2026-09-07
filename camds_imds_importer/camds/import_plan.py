@@ -117,6 +117,26 @@ def proportion(node):
     return ("range", low, high)
 
 
+def children_mass(node) -> float | None:
+    """What a Component's contents add up to, in grams, or None if unknowable.
+
+    A child Component declares a mass per item and appears `quantity` times; a
+    Semicomponent and a Material each count once. One child with no mass makes
+    the total unknowable rather than smaller.
+    """
+    total = 0.0
+    for child in node.get("children") or []:
+        mass = child.get("weight_g")
+        count = child.get("quantity") if child.get("node_type") == "COMPONENT" else 1
+        if mass is None or count is None:
+            return None
+        try:
+            total += float(mass) * float(count)
+        except (TypeError, ValueError):
+            return None
+    return total
+
+
 @dataclass
 class ImportRequest:
     root: dict
@@ -126,11 +146,44 @@ class ImportRequest:
     merges: list[str] = field(default_factory=list)
     # Filled by validate(): accepted as declared, but the operator is told.
     warnings: list[str] = field(default_factory=list)
+    # Filled by snapshot(): values IMDS left blank that were worked out here.
+    derived: list[str] = field(default_factory=list)
 
     def snapshot(self):
         clone = copy.deepcopy(self)
         clone.merges = clone._normalise()
+        clone.derived = clone._derive_masses()
         return clone
+
+    def _derive_masses(self) -> list[str]:
+        """Fill in a Component mass IMDS left blank from what it contains.
+
+        IMDS prints no weight for some assembled rows - a solder paste applied
+        to a joint, for instance - while every row around it carries one. The
+        mass of a Component is what its contents weigh, so it is worked out
+        rather than demanded from the operator, and said out loud: this is the
+        one number in the tree that the report did not state.
+
+        Depth first, so a Component whose own child was just filled in can be
+        filled in too. A declared mass is never replaced, and a child with no
+        mass leaves the parent blank rather than understating it.
+        """
+        notes: list[str] = []
+
+        def visit(node):
+            for child in node.get("children") or []:
+                visit(child)
+            if (node.get("node_type") != "COMPONENT" or node.get("weight_g") is not None
+                    or not node.get("children")):
+                return
+            total = children_mass(node)
+            if total:
+                node["weight_g"] = total
+                notes.append(f"{node.get('name')}: IMDS printed no mass, so the {total:g} g "
+                             "its contents weigh was used")
+
+        visit(self.root)
+        return notes
 
     def _normalise(self) -> list[str]:
         notes: list[str] = []
@@ -322,19 +375,13 @@ class ImportRequest:
             if kind == "COMPONENT" and node.get("children"):
                 # Repeated names need no disambiguation: the importer addresses
                 # tree nodes by document order, the order in which it added them.
-                total = 0.0
-                complete = True
                 for c in node["children"]:
-                    mass = measure(c.get("weight_g"), (c.get("name") or "?") + " mass")
-                    count = 1.0
+                    measure(c.get("weight_g"), (c.get("name") or "?") + " mass")
                     if c.get("node_type") == "COMPONENT":
-                        count = measure(c.get("quantity"), (c.get("name") or "?") + " quantity")
-                    if mass is None or count is None:
-                        complete = False
-                        continue
-                    total += mass * count
+                        measure(c.get("quantity"), (c.get("name") or "?") + " quantity")
+                total = children_mass(node)
                 expected = node.get("weight_g")
-                if complete and expected is not None:
+                if total is not None and expected is not None:
                     expected = float(expected)
                     if not math.isclose(total, expected, rel_tol=0.001, abs_tol=0.000001):
                         share = abs(total - expected) / expected * 100 if expected else float("inf")

@@ -270,3 +270,34 @@ async def test_an_unreferenced_node_is_not_asked_about():
     await backend.open_saved("Component", (SAVED_TREE["mds_id"], "0.01"))
     await backend.select(("METAL-FILM RESISTOR", "Aluminium alloys"))
     assert ("can_modify", "CA_5_124767560") not in api.calls
+
+
+def _case(label):
+    return CASES[label]
+
+
+def test_the_recyclate_answer_is_the_whole_record_the_browser_sent():
+    """Sending only the five fields that carry a value was answered with the
+    generic "程序异常", the same way a null cindex was. CAMDS wants the whole
+    record, not the difference."""
+    from camds_imds_importer.camds.api import RECYCLATE_NONE
+
+    recorded = _case("release: recyclate answered No")["request"]["materialRecyclateVO"]
+    assert RECYCLATE_NONE == recorded
+    assert len(RECYCLATE_NONE) == 29
+    assert RECYCLATE_NONE["containRecyclate"] == 2, "2 is No"
+
+
+def test_validation_is_the_gate_the_recording_shows_it_to_be():
+    """One error before the recyclate answer, none after. Publishing on the
+    first of those would have released an incomplete MDS."""
+    answers = _case("release: validate before and after")["answers"]
+    assert answers[0]["errorSize"] == 1 and answers[0]["errorFlag"] == "1"
+    assert answers[-1]["errorSize"] == 0 and answers[-1]["errorFlag"] == "0"
+
+
+def test_publishing_addresses_the_mds_in_the_query_and_carries_nothing_else():
+    recorded = _case("release: innerPublish")
+    assert recorded["query"].startswith("mdsId=CA_8_")
+    assert set(recorded["request"]) == {"_t"}
+    assert recorded["response"]["respCode"] == "0"

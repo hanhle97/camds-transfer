@@ -85,13 +85,41 @@ FROM_TO, FIXED, REST = 1, 2, 3
 # The recyclate question on a Material, as the release form posts it. 2 is No;
 # the recorded release answered No and declared the material wholly inorganic
 # fossil based, which is what the form fills in when there is no recyclate.
+#
+# All 29 fields, nulls included. Sending only the five that carry a value was
+# answered with a generic "程序异常" - the same way a null cindex and a null
+# recycledmaterials were. CAMDS wants the whole record, not the difference.
 NO_RECYCLATE = 2
 RECYCLATE_NONE = {
-    "containRecyclate": NO_RECYCLATE,
     "inorganicFossilBasedMinrate": 100,
     "inorganicFossilBasedMaxrate": 100,
-    "bioBasedMinrate": 0,
+    "containRecyclate": NO_RECYCLATE,
     "bioBasedMaxrate": 0,
+    "bioBasedMinrate": 0,
+    "priInorganicFossilMinrate": None,
+    "priInorganicFossilMaxrate": None,
+    "recyclateMinrate": None,
+    "recyclateMaxrate": None,
+    "primaryBioBasedMinrate": None,
+    "primaryBioBasedMaxrate": None,
+    "mepRecyclateMinrate": None,
+    "mepRecyclateMaxrate": None,
+    "mepPreConsumerMinrate": None,
+    "mepPreConsumerMaxrate": None,
+    "mepPostConsumerMinrate": None,
+    "mepPostConsumerMaxrate": None,
+    "chemRecyclateMinrate": None,
+    "chemRecyclateMaxrate": None,
+    "chemPreConsumerMinrate": None,
+    "chemPreConsumerMaxrate": None,
+    "chemPostConMinrate": None,
+    "chemPostConMaxrate": None,
+    "chemPreConsumerMassbalanced": None,
+    "chemPostConMassbalanced": None,
+    "secondaryBioMinrate": None,
+    "secondaryBioMaxrate": None,
+    "secondaryBioMassbalanced": None,
+    "chemCertified": None,
 }
 
 

@@ -1644,6 +1644,76 @@
           }
         ]
       }
+    },
+    {
+      "label": "release: recyclate answered No",
+      "kind": "release_recyclate",
+      "request": {
+        "mdsId": "CA_8_55110193",
+        "materialRecyclateVO": {
+          "inorganicFossilBasedMinrate": 100,
+          "inorganicFossilBasedMaxrate": 100,
+          "containRecyclate": 2,
+          "bioBasedMaxrate": 0,
+          "bioBasedMinrate": 0,
+          "priInorganicFossilMinrate": null,
+          "priInorganicFossilMaxrate": null,
+          "recyclateMinrate": null,
+          "recyclateMaxrate": null,
+          "primaryBioBasedMinrate": null,
+          "primaryBioBasedMaxrate": null,
+          "mepRecyclateMinrate": null,
+          "mepRecyclateMaxrate": null,
+          "mepPreConsumerMinrate": null,
+          "mepPreConsumerMaxrate": null,
+          "mepPostConsumerMinrate": null,
+          "mepPostConsumerMaxrate": null,
+          "chemRecyclateMinrate": null,
+          "chemRecyclateMaxrate": null,
+          "chemPreConsumerMinrate": null,
+          "chemPreConsumerMaxrate": null,
+          "chemPostConMinrate": null,
+          "chemPostConMaxrate": null,
+          "chemPreConsumerMassbalanced": null,
+          "chemPostConMassbalanced": null,
+          "secondaryBioMinrate": null,
+          "secondaryBioMaxrate": null,
+          "secondaryBioMassbalanced": null,
+          "chemCertified": null
+        },
+        "structId": "CA_21_792090237",
+        "_t": 1788768860
+      }
+    },
+    {
+      "label": "release: validate before and after",
+      "kind": "release_validate",
+      "answers": [
+        {
+          "errorSize": 1,
+          "errorFlag": "1",
+          "buttonCheck": "0"
+        },
+        {
+          "errorSize": 0,
+          "errorFlag": "0",
+          "buttonCheck": "0"
+        }
+      ]
+    },
+    {
+      "label": "release: innerPublish",
+      "kind": "release_publish",
+      "query": "mdsId=CA_8_55110193",
+      "request": {
+        "_t": 1788768897
+      },
+      "response": {
+        "respCode": "0",
+        "data": null,
+        "ok": true,
+        "message": ""
+      }
     }
   ]
 }

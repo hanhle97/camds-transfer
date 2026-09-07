@@ -29,7 +29,10 @@ opening; only the one before publishing decides, so only that one is made here.
 
 ## The recyclate answer
 
-`containRecyclate: 2` is No. 29 fields, 24 of them null:
+`containRecyclate: 2` is No. **All 29 fields go, nulls included** - sending
+only the five that carry a value was answered with the generic `程序异常`, the
+same way a null `cindex` and a null `recycledmaterials` were. CAMDS wants the
+whole record, not the difference. The five with values:
 
 ```json
 {"containRecyclate": 2,

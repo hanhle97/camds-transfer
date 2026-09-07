@@ -8,6 +8,7 @@ import pymupdf
 from PySide6.QtCore import QThread, Qt, QObject, QTimer
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox, QFileDialog, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QMainWindow,
     QMessageBox, QProgressBar, QPushButton, QTabWidget, QVBoxLayout, QWidget,
 )
@@ -23,6 +24,7 @@ from ..workers.camds_worker import CamdsLoginWorker
 from ..workers.discovery_worker import DiscoveryWorker
 from ..workers.parser_worker import ParserWorker
 from ..workers.validation_worker import ValidationWorker
+from .import_report import failure, summary
 from .logs_tab import LogsTab
 from .status_light import Lamp, StatusLight
 from .overview_tab import OverviewTab
@@ -91,6 +93,8 @@ class MainWindow(QMainWindow):
         self.progress = ImportProgress()
         self._active_login_worker: CamdsLoginWorker | None = None
         self._parse_started_at: float | None = None
+        self._parse_seconds: float = 0.0
+        self._import_started_at: float | None = None
         self._selected_page_count: int = 0
         self._pending_login: Credentials | None = None
         self._build_ui()
@@ -153,6 +157,10 @@ class MainWindow(QMainWindow):
         self.camds_tab.session_changed.connect(self._camds_session_changed)
         self.camds_tab.login_required.connect(self.login_from_menu)
         self.camds_tab.session_ready.connect(self._camds_session_ready)
+        self.camds_tab.import_started.connect(
+            lambda: setattr(self, "_import_started_at", time.monotonic()))
+        self.camds_tab.import_finished.connect(self._import_finished)
+        self.camds_tab.import_failed.connect(self._import_failed)
         for title, widget in (("Overview", self.overview_tab), ("MDS Tree", self.tree_tab), ("Validation", self.validation_tab), ("CAMDS Search / Create", self.camds_tab), ("Progress", self.progress_tab), ("Logs", self.logs_tab)):
             self.tabs.addTab(widget, title)
         root.addWidget(self.tabs)
@@ -252,6 +260,38 @@ class MainWindow(QMainWindow):
             self.overall.setValue(100)
             self.status_label.set("Status: Ready", Lamp.OK)
 
+    def _import_finished(self, result: object) -> None:
+        elapsed = (time.monotonic() - self._import_started_at) if self._import_started_at else 0.0
+        self._import_started_at = None
+        title, body = summary(result, parse_seconds=self._parse_seconds,
+                              import_seconds=elapsed,
+                              nodes=getattr(self.statistics, "total_nodes", 0))
+        self._announce(title, body, QMessageBox.Icon.Information)
+
+    def _import_failed(self, message: str) -> None:
+        elapsed = (time.monotonic() - self._import_started_at) if self._import_started_at else 0.0
+        self._import_started_at = None
+        journal = getattr(self.camds_tab, "journal_path", None)
+        title, body = failure(message, parse_seconds=self._parse_seconds,
+                              import_seconds=elapsed,
+                              done=self.progress.completed_nodes, total=self.progress.total_nodes,
+                              journal=journal)
+        self._announce(title, body, QMessageBox.Icon.Warning)
+
+    def _announce(self, title: str, body: str, icon) -> None:
+        """Say it in the log, flash the taskbar, and put it on screen.
+
+        An import runs for hours and the window is usually behind something
+        else by the time it ends, so the taskbar entry is flashed: raising the
+        window would steal focus from whatever the operator moved on to.
+        """
+        for line in body.splitlines():
+            if line.strip():
+                self.logs_tab.append("INFO", line)
+        QApplication.alert(self)
+        box = QMessageBox(icon, title, body, QMessageBox.StandardButton.Ok, self)
+        box.exec()
+
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("File")
         import_action = QAction("Import IMDS PDF", self)
@@ -324,6 +364,8 @@ class MainWindow(QMainWindow):
         thread.start()
 
     def _parse_completed(self, document: MDSDocument, statistics: object) -> None:
+        if self._parse_started_at is not None:
+            self._parse_seconds = time.monotonic() - self._parse_started_at
         self.document, self.statistics = document, statistics
         self.camds_tab.set_document(document)
         self.state_machine.transition(AppState.PARSED)

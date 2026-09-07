@@ -40,6 +40,10 @@ class CamdsTab(QWidget):
     session_changed = Signal(str)
     login_required = Signal()
     session_ready = Signal()
+    # An import runs for hours; whoever started it is not watching it end.
+    import_started = Signal()
+    import_finished = Signal(object)
+    import_failed = Signal(str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -49,6 +53,8 @@ class CamdsTab(QWidget):
         self.importing = False
         self.last_error = ""
         self.parsed_root = None
+        # Named in the result note; kept so a failure can point at it.
+        self.journal_path = None
         self.session = "UNKNOWN"
         self.browser_open = False
         root = QVBoxLayout(self)
@@ -192,6 +198,7 @@ class CamdsTab(QWidget):
             return
         dialog = ImportDialog(self.parsed_root, self)
         if dialog.exec() and dialog.request:
+            self.import_started.emit()
             self._submit("import_tree", dialog.request, resume=dialog.resume.isChecked(),
                          reuse=dialog.reuse.isChecked(),
                          release=dialog.release.isChecked())
@@ -398,6 +405,10 @@ class CamdsTab(QWidget):
             self.session_changed.emit(self.session)
         if result["kind"] == "import_tree":
             self.import_status.setText(f"Import complete: {result.get('nodes', 0)} / {result.get('total', 0)} steps verified.")
+            note = str(result.get("note") or "")
+            if "Journal: " in note:
+                self.journal_path = note.split("Journal: ", 1)[1].strip()
+            self.import_finished.emit(result)
         # An operation that CAMDS accepted can still hold findings the operator
         # has to see; a completed run must not bury them.
         for finding in (result.get("warnings") or []) + (result.get("skipped") or []):
@@ -418,7 +429,7 @@ class CamdsTab(QWidget):
 
     def _failed(self, message, editor_open) -> None:
         self.busy = False
-        self.importing = False
+        was_importing, self.importing = self.importing, False
         short = brief(message)
         self.import_status.setText("Import stopped: " + brief(message, lines=1))
         self.editor_open = editor_open
@@ -430,6 +441,8 @@ class CamdsTab(QWidget):
         self._update()
         if editor_open:
             self.forms.setEnabled(False)
+        if was_importing:
+            self.import_failed.emit(message)
 
     def _finished(self) -> None:
         worker, self.worker = self.worker, None

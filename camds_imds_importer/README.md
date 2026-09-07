@@ -87,6 +87,20 @@ staying quiet.
 It runs the same `resolve_substance` the import runs, not a second copy of the
 rule, so passing it means something.
 
+### When an import ends
+
+A run of the real report takes hours, so nobody is watching when it finishes.
+Both outcomes reach the operator the same way: the lines go to the Logs tab,
+the taskbar entry is flashed, and a dialog says what happened. The window is
+not raised - it would steal focus from whatever the operator moved on to.
+
+A finished run reports the steps verified, how long parsing and importing each
+took, how many Materials were reused and released, and how many items were
+imported as declared or left unset. A stopped one reports how far it got, the
+error, that completed saves are not rolled back, and where the journal is -
+because the useful question after a failure is the same as after a success:
+how far did it get, and what did it touch.
+
 ### Reusing a Material already in CAMDS
 
 Creating one per run filled the account with duplicates. A Material is looked

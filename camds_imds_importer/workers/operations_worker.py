@@ -16,6 +16,7 @@ from PySide6.QtCore import QThread, Signal
 from playwright.async_api import async_playwright
 
 from ..camds.api import CamdsApi, CamdsApiError
+from ..camds.browser_runtime import chromium_present, install_chromium
 from ..camds.api_backend import ApiBackend
 from ..camds.action_policy import CamdsAction, SensitiveActionBlocked, require_action_confirmation
 from ..camds.discovery import discover_material_classifications
@@ -251,8 +252,24 @@ class OperationsWorker(QThread):
             return SessionStatus.UNKNOWN
         return SessionStatus.AUTHENTICATED
 
+    def _ensure_chromium(self) -> None:
+        """Fetch the browser once if this machine has never had it.
+
+        A built executable carries Playwright's driver but not its 430 MB
+        browser. Without this the first window fails telling the operator to
+        run `playwright install`, which is not a command they have.
+        """
+        if chromium_present():
+            return
+        self.notice.emit(
+            "Downloading the browser CAMDS is driven through (about 430 MB). "
+            "This happens once on this machine.")
+        install_chromium(on_output=lambda line: self.operation_progress.emit("CAMDS: " + line))
+        self.notice.emit("Browser installed.")
+
     async def _open_window(self, runtime):
         """Launch a window on the saved session; its cookies are the same ones."""
+        await asyncio.to_thread(self._ensure_chromium)
         browser = await runtime.chromium.launch(headless=False)
         options = {"storage_state": str(self.storage)} if self.storage.is_file() else {}
         context = await browser.new_context(**options)

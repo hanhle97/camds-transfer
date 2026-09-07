@@ -335,6 +335,17 @@ A built executable keeps `config/`, `.runtime/` and `output/` beside itself
 rather than in whatever directory it was started from, so put it somewhere
 writable rather than in Program Files.
 
+Without a bundled browser, the first CAMDS window downloads Chromium through
+Playwright's own driver, which ships with the build - no Python and no
+`playwright` command are needed on the machine.
+
+`CAMDS-IMDS-Importer.exe check` prints what the build resolved: where it keeps
+its files, where it looks for the browser and whether it found one. The first
+build failed with a path inside its own extraction directory because a stray
+`PLAYWRIGHT_BROWSERS_PATH=0` in the environment means "look inside the
+package", where nothing had been bundled. A runtime hook now settles that
+variable either way, and `check` shows the answer.
+
 ### What travels with the repository, and what does not
 
 | | Where | Travels |

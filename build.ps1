@@ -114,6 +114,13 @@ if ($IncludeBrowser) {
 Invoke-Native $venvPython @("-m", "playwright", "install", "chromium") "Installing Chromium"
 
 Step "Building"
+# A previous build that is still running cannot be replaced, and Windows says
+# only "access denied" about a file it will not name a reason for.
+$previous = Join-Path $distDir "$name.exe"
+if (Test-Path $previous) {
+    try { [IO.File]::Open($previous, 'Open', 'ReadWrite', 'None').Dispose() }
+    catch { throw "$previous is in use. Close the running application, then build again." }
+}
 if (Test-Path $distDir) { Remove-Item -Recurse -Force $distDir }
 if (Test-Path $workDir) { Remove-Item -Recurse -Force $workDir }
 
@@ -141,9 +148,11 @@ $arguments = @(
     "--exclude-module", "tkinter"
     "--exclude-module", "pytest"
 )
-if ($IncludeBrowser) {
-    $arguments += @("--runtime-hook", (Join-Path $root "packaging\playwright_browsers_hook.py"))
-}
+# Always: the hook decides where Playwright looks, and a build without a
+# bundled browser has to say so explicitly. A machine with a stray
+# PLAYWRIGHT_BROWSERS_PATH=0 would otherwise send it hunting inside its own
+# extraction directory, where nothing was bundled.
+$arguments += @("--runtime-hook", (Join-Path $root "packaging\playwright_browsers_hook.py"))
 $arguments += if ($OneDir) { "--onedir" } else { "--onefile" }
 $arguments += (Join-Path $root "camds_imds_importer\app.py")
 

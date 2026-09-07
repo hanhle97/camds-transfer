@@ -44,6 +44,30 @@ def working_directory() -> Path:
     return Path.cwd()
 
 
+def check_command() -> int:
+    """Say where this build looks for things and what it found.
+
+    A built executable gives an operator nothing to inspect, and the first one
+    failed with a path inside its own extraction directory that meant nothing
+    to anybody. This prints what was actually resolved.
+    """
+    import os
+
+    from camds_imds_importer.camds.browser_runtime import browsers_root, chromium_present
+
+    frozen = getattr(sys, "frozen", False)
+    print(f"Build            : {'executable' if frozen else 'source checkout'}")
+    print(f"Python           : {sys.version.split()[0]}")
+    print(f"Files kept in    : {working_directory()}")
+    print(f"BROWSERS_PATH    : {os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '<unset>')}")
+    print(f"Browser looked up: {browsers_root()}")
+    found = chromium_present()
+    print(f"Chromium         : {'found' if found else 'not installed yet'}")
+    if not found:
+        print("\nThe first CAMDS window will download it (about 430 MB), once.")
+    return 0
+
+
 def main() -> int:
     import os
 
@@ -53,7 +77,10 @@ def main() -> int:
     parse_parser = subparsers.add_parser("parse", help="Parse an IMDS report")
     parse_parser.add_argument("input_pdf", type=Path)
     parse_parser.add_argument("--output-dir", type=Path)
+    subparsers.add_parser("check", help="Report what this build resolved, and whether Chromium is present")
     args = parser.parse_args()
+    if args.command == "check":
+        return check_command()
     if args.command == "parse":
         return parse_command(args.input_pdf, args.output_dir)
     from PySide6.QtWidgets import QApplication

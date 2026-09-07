@@ -15,6 +15,28 @@ than what seemed reasonable.
 | POST | `/api/mds/supplier/saveSupplierDataView` | `mdsid`, `supplierContactId`, `orgId`, `userId` | name the contact |
 | POST | `/api/mds/mdsValidate/innerPublish` | `mdsId` | **release** |
 
+## The order is part of the evidence
+
+Going straight to `editMaterialRecyclateVO` is refused with the generic
+`程序异常` even carrying the whole record. The form opens the MDS first, and
+that prefix is not decoration:
+
+```
+canbeModifyMx        mdsId          announce the intent to modify
+loadMdsTree          mdsId
+loadNodeDate         strutsId
+bStandardMaterials   mdsId          answered false
+mdsValidate                         errorSize 1 - the question is unanswered
+loadNodeDate         strutsId
+bStandardMaterials   mdsId
+editNodeDate                        the node posted back unchanged
+editMaterialRecyclateVO             only now
+```
+
+Which single call CAMDS actually requires is not known. All of them are made,
+in that order, which is the same discipline that fixed `getMdsStatus` before
+`loadMdsTree`.
+
 ## Validation is the gate
 
 Recorded twice, and the two answers are the point:

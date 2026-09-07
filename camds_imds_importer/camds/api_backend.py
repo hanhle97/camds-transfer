@@ -488,8 +488,20 @@ class ApiBackend:
         them and not as whoever recorded this.
         """
         mds_id = ref[0]
-        await self.api.set_material_recyclate(mds_id, dict(RECYCLATE_NONE))
+        # The form's opening sequence, in its order. Jumping straight to the
+        # recyclate write was refused with a generic "程序异常" even with the
+        # whole record: CAMDS wants the MDS announced and opened first, the way
+        # it wants getMdsStatus before a tree is read.
+        await self.api.can_modify(mds_id)
         await self.open_saved("Material", ref)
+        await self.api.b_standard_materials(mds_id)
+        await self.api.validate_mds(mds_id)
+        await self._load(self.root.struts_id)
+        await self.api.b_standard_materials(mds_id)
+        await self.api.set_fields(self.root.struts_id, {})
+
+        await self.api.set_material_recyclate(mds_id, dict(RECYCLATE_NONE))
+        await self._load(self.root.struts_id)
         await self.api.set_fields(self.root.struts_id, {})
         await self.api.save(self.root.struts_id, mds_id)
 

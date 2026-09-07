@@ -585,6 +585,11 @@ class CamdsApi:
                                 payload={"mdsId": mds_id, "materialRecyclateVO": view,
                                          "_t": _stamp()})
 
+    async def b_standard_materials(self, mds_id: str) -> Any:
+        """Asked twice before the recyclate write. Answered false both times;
+        what it decides is not known, only that the form asks it."""
+        return await self._post("/api/mds/tree/bStandardMaterials", {"mdsId": mds_id})
+
     async def mds_creator(self, mds_id: str) -> dict:
         """Who is signed in, as CAMDS itself reports them.
 

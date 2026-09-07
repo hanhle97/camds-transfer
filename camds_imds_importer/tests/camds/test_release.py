@@ -13,10 +13,10 @@ USER, ORG, CONTACT = "CA_2_111138", "CA_3_3386", "8b18501f7b8c9d3e8a11fcdfdc82d3
 
 
 class Camds:
-    def __init__(self, errors=(0,), contacts=None, creator=None):
-        # The recorded session validates twice: once when the form opens, and
-        # once before publishing. Only the second one decides, so that is the
-        # only one made here.
+    def __init__(self, errors=(1, 0), contacts=None, creator=None):
+        # The recorded session validates twice. The first is the form opening -
+        # it reported one error, before the recyclate question was answered -
+        # and only the second decides whether to publish.
         self.calls, self.bodies = [], {}
         self.errors = list(errors)
         self.contacts = contacts if contacts is not None else [
@@ -67,10 +67,14 @@ async def test_the_release_follows_the_recorded_order():
     camds = Camds()
     await backend(camds).release_material(("CA_8_9", "0.01"))
     order = [c for c in camds.calls if c in {
-        "editMaterialRecyclateVO", "saveNodeDate", "getMdsCreator",
-        "findMDSContacterViewList", "saveSupplierDataView", "mdsValidate", "innerPublish"}]
-    assert order == ["editMaterialRecyclateVO", "saveNodeDate", "getMdsCreator",
-                     "findMDSContacterViewList", "saveSupplierDataView",
+        "canbeModifyMx", "bStandardMaterials", "editMaterialRecyclateVO", "saveNodeDate",
+        "getMdsCreator", "findMDSContacterViewList", "saveSupplierDataView",
+        "mdsValidate", "innerPublish"}]
+    # The form's own order. Going straight to the recyclate write was refused
+    # with a generic program exception even carrying the whole record.
+    assert order == ["canbeModifyMx", "bStandardMaterials", "mdsValidate",
+                     "bStandardMaterials", "editMaterialRecyclateVO", "saveNodeDate",
+                     "getMdsCreator", "findMDSContacterViewList", "saveSupplierDataView",
                      "mdsValidate", "innerPublish"]
 
 
@@ -102,12 +106,21 @@ async def test_the_contact_chosen_is_the_signed_in_user_not_the_first_row():
 
 
 async def test_a_material_camds_reports_errors_on_is_not_published():
-    """Validation is the gate: it reported one error before the recyclate
-    answer and none after."""
-    camds = Camds(errors=(3,))
+    """The second validate is the gate. The first is the form opening, and the
+    recording shows it reporting an error that answering the question clears -
+    treating that one as the gate would refuse every release."""
+    camds = Camds(errors=(1, 3))
     with pytest.raises(CamdsApiError, match="3 validation error"):
         await backend(camds).release_material(("CA_8_9", "0.01"))
     assert "innerPublish" not in camds.calls
+
+
+async def test_the_opening_validation_is_not_the_gate():
+    """It reported one error in the recording, before the recyclate question
+    was answered, and the release went ahead once it was."""
+    camds = Camds(errors=(1, 0))
+    await backend(camds).release_material(("CA_8_9", "0.01"))
+    assert "innerPublish" in camds.calls
 
 
 async def test_an_ambiguous_contact_stops_rather_than_guessing():

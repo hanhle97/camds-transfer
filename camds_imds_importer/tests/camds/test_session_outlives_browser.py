@@ -71,36 +71,78 @@ async def test_being_unreachable_is_not_evidence_the_session_ended(tmp_path):
     assert await worker._api_status(Down(), True) is SessionStatus.UNKNOWN
 
 
-def test_no_request_context_is_built_outside_the_browser():
+def test_no_camds_call_is_made_by_a_node_http_client():
     """The ENOTFOUND regression guard.
 
-    A standalone request context is a Node HTTP client: it resolves DNS itself
-    and knows nothing about the proxy Chromium picked up from the system. On a
-    corporate network every CAMDS call died with "getaddrinfo ENOTFOUND
-    catarc.camds.org.cn" while the signed-in window beside it worked. Taking
-    the request from the browser context inherits the proxy - and the live
-    cookie jar, so nothing has to be copied across either.
+    Both a standalone request context and context.request are Node HTTP
+    clients: they resolve DNS and pick a proxy themselves, and on some networks
+    neither could reach CAMDS - "getaddrinfo ENOTFOUND catarc.camds.org.cn" -
+    while the signed-in window beside them worked. A fetch evaluated in a page
+    cannot diverge from the browser, because it is the browser.
     """
+    import ast
     import inspect
 
     from camds_imds_importer.workers import operations_worker
 
     source = inspect.getsource(operations_worker)
-    assert "request.new_context" not in source, "a context outside the browser has no proxy"
-    assert "context.request" in source
+    # Read the code, not the prose: the docstring explains why context.request
+    # was abandoned, and a plain text search cannot tell that from a use of it.
+    tree = ast.parse(source)
+    used = {
+        node.attr for node in ast.walk(tree)
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+        and node.value.id in {"context", "runtime"} and node.attr == "request"
+    }
+    assert not used, "a Node HTTP client is not the browser's network stack"
+    assert "PageTransport" in source
 
 
-def test_every_camds_call_is_made_on_the_authenticated_context():
-    """One context, so what the window shows and what the API sees agree."""
+def test_every_camds_call_is_made_on_the_one_transport():
+    """The window and the API must not be able to reach different places."""
     import inspect
 
     from camds_imds_importer.workers.operations_worker import OperationsWorker
 
     session = " ".join(inspect.getsource(OperationsWorker._session).split())
-    for call in ("self._api_status(context.request",
-                 "self._check_substances(context.request",
-                 "CamdsApi( context.request"):
+    for call in ("self._api_status(api,", "self._check_substances(api,", "CamdsApi( api,"):
         assert call in session, call
+
+
+async def test_the_api_page_is_on_the_camds_origin_and_is_not_the_window(tmp_path):
+    """A same-origin fetch needs the origin, and the operator's window is not
+    it: closing that window must not stop an import."""
+    from camds_imds_importer.camds.api import BASE_URL
+    from camds_imds_importer.camds.page_transport import PageTransport
+
+    visited, pages = [], []
+
+    class Page:
+        def set_default_timeout(self, _ms): pass
+        def is_closed(self): return False
+        async def goto(self, url, **k): visited.append(url)
+        async def close(self): pass
+
+    class Context:
+        async def new_page(self):
+            pages.append(Page())
+            return pages[-1]
+
+    class Browser:
+        async def new_context(self, **options): return Context()
+
+    class Runtime:
+        class chromium:
+            @staticmethod
+            async def launch(**k): return Browser()
+
+    worker = OperationsWorker(_state(tmp_path / "state.json"))
+    worker._ensure_chromium = lambda: None
+    browser, context, api = await worker._open_browser(Runtime())
+
+    assert isinstance(api, PageTransport)
+    assert visited == [BASE_URL], "navigated once, to the origin"
+    assert api.page is pages[0], "the API page is its own, made before any window"
 
 
 def test_only_the_actions_that_draw_a_page_need_a_window():
@@ -160,16 +202,23 @@ async def test_the_window_is_usable_before_camds_finishes_drawing(tmp_path):
     worker.browser_changed = type("S", (), {"emit": lambda _s, v: opened.append(v)})()
     worker.notice = type("S", (), {"emit": lambda _s, text: None})()
 
+    made = []
+
     class Page:
+        def __init__(self): self.index = len(made)
         def set_default_timeout(self, _ms): pass
         def is_closed(self): return False
         async def close(self): pass
-        async def goto(self, *a, **k): await still_loading.wait()
+        async def goto(self, *a, **k):
+            # Only the operator's window waits for the application to draw.
+            if self.index:
+                await still_loading.wait()
         async def wait_for_function(self, *a, **k): await still_loading.wait()
 
     class Context:
-        request = object()
-        async def new_page(self): return Page()
+        async def new_page(self):
+            made.append(Page())
+            return made[-1]
 
     class Browser:
         async def new_context(self, **options): return Context()
@@ -180,7 +229,7 @@ async def test_the_window_is_usable_before_camds_finishes_drawing(tmp_path):
             async def launch(**k): return Browser()
 
     worker._ensure_chromium = lambda: None
-    browser, context = await asyncio.wait_for(worker._open_browser(Runtime()), timeout=2)
+    browser, context, api = await asyncio.wait_for(worker._open_browser(Runtime()), timeout=2)
     page, operations = await asyncio.wait_for(worker._open_page(context), timeout=2)
 
     assert browser is not None and page is not None

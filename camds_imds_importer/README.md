@@ -28,14 +28,18 @@ instead.
 
 ### The session is not inside the window
 
-The API runs on `context.request`, the browser context's own request object.
-Not a standalone `playwright.request.new_context()`: that is a Node HTTP client
-which resolves DNS itself and knows nothing about the proxy Chromium picked up
-from the system, so on a corporate network every call failed with `getaddrinfo
-ENOTFOUND catarc.camds.org.cn` while the signed-in window beside it worked.
-Taking the request from the browser context inherits the proxy and the live
-cookie jar together, so a sign-in in the window is usable by the next API call
-with nothing copied across.
+Every API call is a `fetch()` evaluated in a page, not a Playwright request
+context. Both `playwright.request.new_context()` and `context.request` are Node
+HTTP clients: they resolve DNS and pick a proxy themselves, and on some
+networks neither could reach CAMDS - `getaddrinfo ENOTFOUND
+catarc.camds.org.cn` - while the signed-in window beside them worked. Sharing
+the browser's cookie jar was not enough, because the problem was the route, not
+the credentials. A fetch in a page cannot diverge from the browser, because it
+is the browser: the same DNS, proxy and TLS trust that let the operator sign
+in, and the session cookie by virtue of being same-origin.
+
+The page it runs in is CAMDS's own origin and is never shown. The visible
+window is the operator's, and closing it must not stop an import.
 
 The session is the browser **context**, not the window. Closing a page does not
 close its context, so the import, the catalogue check and the status poll keep

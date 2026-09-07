@@ -15,13 +15,14 @@ from pathlib import Path
 from PySide6.QtCore import QThread, Signal
 from playwright.async_api import async_playwright
 
-from ..camds.api import CamdsApi, CamdsApiError
+from ..camds.api import BASE_URL, CamdsApi, CamdsApiError
 from ..camds.browser_runtime import chromium_present, install_chromium
 from ..camds.api_backend import ApiBackend
 from ..camds.action_policy import CamdsAction, SensitiveActionBlocked, require_action_confirmation
 from ..camds.discovery import discover_material_classifications
 from ..camds.import_control import ImportControl
 from ..camds.import_plan import MAX_REPORTED_ERRORS
+from ..camds.page_transport import PageTransport
 from ..camds.login import LoginStatus
 from ..camds.operations import CamdsOperations, SEARCH_URL
 from ..camds.session import SessionStatus, session_status, sign_in
@@ -218,25 +219,31 @@ class OperationsWorker(QThread):
 
     # --------------------------------------------------------------- session
     async def _open_browser(self, runtime):
-        """Launch Chromium and make the one context every CAMDS call uses.
+        """Launch Chromium, and open the page every CAMDS API call runs in.
 
-        The API runs on `context.request`, not on a request context of its own.
-        A standalone one is a Node HTTP client: it resolves DNS itself and knows
-        nothing about the proxy Chromium picked up from the system, so on a
-        corporate network every call died with
+        `context.request` was not enough. It shares the cookie jar, but it is
+        still a Node HTTP client that resolves DNS and picks a proxy itself, and
+        on some networks it could not reach CAMDS at all -
 
             getaddrinfo ENOTFOUND catarc.camds.org.cn
 
-        while the signed-in window beside it worked perfectly. Taking the
-        request from the browser context inherits both the proxy and the live
-        cookie jar, so a sign-in in the window is usable by the next API call
-        with nothing to copy across.
+        - while the signed-in window beside it worked. A `fetch()` evaluated in
+        a page cannot diverge like that: it is the browser's own stack, so
+        whatever DNS, proxy and TLS trust let the operator sign in serve the API
+        too, and the session cookie goes with it because it is same-origin.
+
+        This page is never shown. The visible window is the operator's, and
+        closing it must not stop an import.
         """
         await asyncio.to_thread(self._ensure_chromium)
         browser = await runtime.chromium.launch(headless=False)
         options = {"storage_state": str(self.storage)} if self.storage.is_file() else {}
         context = await browser.new_context(**options)
-        return browser, context
+        api_page = await context.new_page()
+        # Only the origin matters for a same-origin fetch, so this does not wait
+        # for the single-page application to finish drawing.
+        await api_page.goto(BASE_URL, wait_until="commit", timeout=NAVIGATION_TIMEOUT_MS)
+        return browser, context, PageTransport(api_page)
 
     async def _api_status(self, api, was_authenticated: bool):
         """Ask CAMDS itself, with one read-only call the import depends on."""
@@ -302,11 +309,11 @@ class OperationsWorker(QThread):
 
     async def _session(self) -> None:
         async with async_playwright() as runtime:
-            browser = context = page = operations = None
+            browser = context = page = operations = api = None
             task = None
             authenticated = False
             try:
-                browser, context = await self._open_browser(runtime)
+                browser, context, api = await self._open_browser(runtime)
                 page, operations = await self._open_page(context)
                 self.ready.emit()
                 next_poll = 0.0
@@ -325,7 +332,7 @@ class OperationsWorker(QThread):
                         # Chromium itself is gone, so the session went with it.
                         # Rebuild from the last saved state rather than stop.
                         self.notice.emit("The CAMDS browser exited; reopening it on the saved session.")
-                        browser, context = await self._open_browser(runtime)
+                        browser, context, api = await self._open_browser(runtime)
                         page = operations = None
                     editor_open = operations.editor_open if operations else False
                     if task is not None and task.done():
@@ -338,7 +345,7 @@ class OperationsWorker(QThread):
                     if task is None and now >= next_poll and not editor_open:
                         # One authenticated context, so what the window shows and
                         # what the API sees can no longer disagree.
-                        status = await self._api_status(context.request, authenticated)
+                        status = await self._api_status(api, authenticated)
                         authenticated = await self._note_session(context, status, authenticated)
                         next_poll = now + SESSION_POLL_SECONDS
                     if task is None:
@@ -378,7 +385,7 @@ class OperationsWorker(QThread):
                                     # A retry during a run of hours must be
                                     # visible, not silently absorbed.
                                     backend = (ApiBackend(CamdsApi(
-                                        context.request,
+                                        api,
                                         on_retry=lambda text: self.operation_progress.emit(
                                             "CAMDS: " + text)))
                                         if self.use_api else DraftBrowser(operations))
@@ -386,7 +393,7 @@ class OperationsWorker(QThread):
                                                             control=self.control)
                                     task = asyncio.create_task(importer.run(request, resume=options.get("resume", False)))
                                 elif action == "check_substances":
-                                    task = asyncio.create_task(self._check_substances(context.request, request))
+                                    task = asyncio.create_task(self._check_substances(api, request))
                                 elif action == "discover_classifications":
                                     task = asyncio.create_task(discover_material_classifications(
                                         operations, Path("debug") / "material-classifications"))

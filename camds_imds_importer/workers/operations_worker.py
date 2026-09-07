@@ -393,7 +393,8 @@ class OperationsWorker(QThread):
                                                             control=self.control)
                                     task = asyncio.create_task(importer.run(
                                         request, resume=options.get("resume", False),
-                                        reuse=options.get("reuse", True)))
+                                        reuse=options.get("reuse", True),
+                                        release=options.get("release", False)))
                                 elif action == "check_substances":
                                     task = asyncio.create_task(self._check_substances(api, request))
                                 elif action == "discover_classifications":

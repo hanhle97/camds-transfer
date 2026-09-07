@@ -373,6 +373,9 @@ class DraftBrowser:
         """Searching the catalogue before creating needs the JSON API backend."""
         return None
 
+    async def release_material(self, ref):
+        raise RuntimeError("Releasing a Material needs the JSON API backend")
+
     async def read_back_findings(self) -> list[str]:
         """Differences accepted during read-back. This backend compares only
         what it can read from the form, and every such check either matches or
@@ -469,6 +472,8 @@ class TreeImporter:
         self.skipped: list[str] = []
         # Materials found in CAMDS and used instead of creating another.
         self.reused: list[str] = []
+        # Materials this run created and published.
+        self.released: list[str] = []
 
     def _open_journal(self, request, resume, can_reenter=False):
         """Return (journal, ResumeState). Refuses any re-entry that cannot be made safe.
@@ -547,12 +552,19 @@ class TreeImporter:
                    camds_value=str(resolution.value), camds_label=chosen["label"],
                    source=resolution.source)
 
-    async def run(self, request: ImportRequest, resume: bool = False, reuse: bool = True):
-        """Import the tree. `reuse` searches CAMDS for a Material before making
-        another one; turning it off recreates everything from the report."""
+    async def run(self, request: ImportRequest, resume: bool = False, reuse: bool = True,
+                  release: bool = False):
+        """Import the tree.
+
+        `reuse` searches CAMDS for a Material before making another one; off,
+        everything in the report is created afresh. `release` publishes each
+        Material this run created, which is outward-facing and not reversible
+        from here, so it is off unless the operator asks for it.
+        """
         request = request.snapshot()
         self.skipped = []
         self.reused = []
+        self.released = []
         warnings = request.validate(self.mapping)
         plan = request.plan()
         # Login/readiness failures should not create a duplicate-prevention journal.
@@ -674,6 +686,14 @@ class TreeImporter:
                     await self.io.verify_substance([mat["name"], substance_names[substance["uid"]]], substance)
                 names[mat["uid"]] = mat["name"]
                 record("material_readback_verified", uid=mat["uid"], ref=ref, display_name=mat["name"])
+                if release:
+                    # Only a Material this run created and verified. A reused or
+                    # mapped one is somebody else's to publish, and both take
+                    # the `continue` above rather than reaching here.
+                    record("release_requested", uid=mat["uid"], ref=ref, name=mat["name"])
+                    await self.io.release_material(ref)
+                    self.released.append(f"{mat['name']}: released as {'/'.join(ref)}")
+                    record("released", uid=mat["uid"], ref=ref, name=mat["name"])
             root = request.root
             if root["node_type"] == "MATERIAL":
                 root_ref = refs[root["uid"]]
@@ -800,7 +820,7 @@ class TreeImporter:
             return {"kind": "import_tree", "identity": "/".join(root_ref), "editor_open": False,
                     "nodes": reporter.completed, "total": reporter.total,
                     "warnings": warnings + found + request.derived, "merges": request.merges,
-                    "skipped": list(self.skipped) + list(self.reused),
+                    "skipped": list(self.skipped) + list(self.reused) + list(self.released),
                     "note": "Draft tree saved and verified through Search / View. No Send/Submit. Journal: " + str(journal.path)}
         except BaseException as exc:
             stopped = isinstance(exc, ImportStopped)

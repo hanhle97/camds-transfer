@@ -20,6 +20,7 @@ Evidence for every endpoint and field is in `CREATE_COMPONENT_API.md`.
 from __future__ import annotations
 
 from .api import (CLASSIFICATION, FIXED, FROM_TO, MASS_PER_ITEM, MATERIAL_NODE, NAME,
+                  RECYCLATE_NONE,
                   NODE_CAS, NODE_NAME,
                   NUMBER, REL_MASS, REL_MASS_UNIT, REL_MODE, REL_QUANTITY, REL_RATE, REST,
                   SEARCH_CAS, SEARCH_ID,
@@ -407,6 +408,50 @@ class ApiBackend:
         raise CamdsApiError(
             f"{node['name']}: searching the CAMDS substance catalogue by {criterion} "
             f"matched {len(hits)} entries exactly, not one. " + _offered(rows))
+
+    # ------------------------------------------------------------------ release
+    async def release_material(self, ref) -> None:
+        """Publish a Material. Outward-facing, and not reversible from here.
+
+        The steps are the release form's own, from `release_material.har`:
+        answer the recyclate question, save the node, name the supplier contact,
+        let CAMDS validate, and publish. Validation is the gate - it reported
+        one error before the recyclate answer and none after - so a Material
+        CAMDS is not satisfied with is never published.
+
+        Nothing about the operator is configured. `getMdsCreator` says who is
+        signed in, and the contact is that same person's entry in their
+        organisation's list, so a build handed to somebody else releases as
+        them and not as whoever recorded this.
+        """
+        mds_id = ref[0]
+        await self.api.set_material_recyclate(mds_id, dict(RECYCLATE_NONE))
+        await self.open_saved("Material", ref)
+        await self.api.set_fields(self.root.struts_id, {})
+        await self.api.save(self.root.struts_id, mds_id)
+
+        creator = await self.api.mds_creator(mds_id)
+        user_id, org_id = creator.get("userId"), creator.get("enterprsieId")
+        if not user_id or not org_id:
+            raise CamdsApiError(
+                f"{mds_id}: CAMDS did not say who is signed in, so the release cannot "
+                "name a supplier contact")
+        contacts = await self.api.org_contacts(org_id)
+        mine = [c for c in contacts if str(c.get("userId")) == str(user_id) and c.get("scid")]
+        if len(mine) != 1:
+            raise CamdsApiError(
+                f"{mds_id}: {len(mine)} contact(s) in organisation {org_id} belong to the "
+                f"signed-in user {user_id}, not one; the release cannot choose for them")
+        await self.api.save_supplier_contact(mds_id=mds_id, contact_id=str(mine[0]["scid"]),
+                                             org_id=str(org_id), user_id=str(user_id))
+
+        checked = await self.api.validate_mds(mds_id)
+        errors = int(checked.get("errorSize") or 0)
+        if errors:
+            raise CamdsApiError(
+                f"{mds_id}: CAMDS reports {errors} validation error(s), so it was not "
+                "released. Open it in CAMDS to see them.")
+        await self.api.publish_mds(mds_id)
 
     # ------------------------------------------------------------- read / verify
     async def open_saved(self, kind, ref) -> None:

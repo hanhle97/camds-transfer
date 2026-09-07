@@ -67,6 +67,14 @@ class ImportDialog(QDialog):
             "Creating a Material per run is what fills an account with duplicates of the "
             "same thing. Unchecked, every Material in the report is created afresh.")
         layout.addWidget(self.reuse)
+        self.release = QCheckBox(
+            "Release each Material this run creates (publishes it in CAMDS)")
+        self.release.setChecked(False)
+        self.release.setToolTip(
+            "Publishing is outward-facing and cannot be undone from here. Only Materials "
+            "this run created are released; a reused or mapped one is somebody else's. "
+            "CAMDS validates first, and a Material it reports errors on is not published.")
+        layout.addWidget(self.release)
         self.resume = QCheckBox(
             "Resume an interrupted run of this exact tree and mapping "
             "(skips Materials already verified; refuses if a draft editor was left half-built)")

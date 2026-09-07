@@ -81,6 +81,18 @@ REL_MAX = "cmaxRate"
 # Portion modes, the same numbering the browser's radio inputs use.
 FROM_TO, FIXED, REST = 1, 2, 3
 
+# The recyclate question on a Material, as the release form posts it. 2 is No;
+# the recorded release answered No and declared the material wholly inorganic
+# fossil based, which is what the form fills in when there is no recyclate.
+NO_RECYCLATE = 2
+RECYCLATE_NONE = {
+    "containRecyclate": NO_RECYCLATE,
+    "inorganicFossilBasedMinrate": 100,
+    "inorganicFossilBasedMaxrate": 100,
+    "bioBasedMinrate": 0,
+    "bioBasedMaxrate": 0,
+}
+
 
 # Endpoints that may be sent again after a timeout or a gateway error.
 #
@@ -513,6 +525,41 @@ class CamdsApi:
             "appstdid": option["appstdid"], "optionCode": option["optionCode"],
             "_t": _stamp(),
         })
+
+    # -------------------------------------------------------------- release
+    # Publishing an MDS. Every field here comes from `release_material.har`.
+    async def validate_mds(self, mds_id: str) -> dict:
+        """CAMDS's own check. `errorSize` is the gate: 1 before the recyclate
+        question was answered, 0 once the MDS was complete."""
+        return await self._post("/api/mds/mdsValidate/mdsValidate",
+                                payload={"mdsId": mds_id, "_t": _stamp()}) or {}
+
+    async def set_material_recyclate(self, mds_id: str, view: dict) -> Any:
+        return await self._post("/api/mds/material/editMaterialRecyclateVO",
+                                payload={"mdsId": mds_id, "materialRecyclateVO": view,
+                                         "_t": _stamp()})
+
+    async def mds_creator(self, mds_id: str) -> dict:
+        """Who is signed in, as CAMDS itself reports them.
+
+        This is where the user id and the organisation come from, so nothing
+        about the operator has to be configured or guessed.
+        """
+        return await self._post("/api/mds/supplier/getMdsCreator", {"mdsId": mds_id}) or {}
+
+    async def org_contacts(self, org_id: str) -> list:
+        return await self._post("/api/mds/supplier/findMDSContacterViewList",
+                                {"orgId": org_id}) or []
+
+    async def save_supplier_contact(self, *, mds_id: str, contact_id: str,
+                                    org_id: str, user_id: str) -> Any:
+        return await self._post("/api/mds/supplier/saveSupplierDataView", {
+            "mdsid": mds_id, "supplierContactId": contact_id,
+            "orgId": org_id, "userId": user_id})
+
+    async def publish_mds(self, mds_id: str) -> Any:
+        """Release. Outward-facing and not reversible from here."""
+        return await self._post("/api/mds/mdsValidate/innerPublish", {"mdsId": mds_id})
 
     async def material_classifications(self) -> list:
         return await self._post(

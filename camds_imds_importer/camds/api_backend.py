@@ -19,7 +19,7 @@ Evidence for every endpoint and field is in `CREATE_COMPONENT_API.md`.
 """
 from __future__ import annotations
 
-from .api import (CLASSIFICATION, FIXED, FROM_TO, MASS_PER_ITEM, MATERIAL_NODE, NAME,
+from .api import (FIXED, FROM_TO, MASS_PER_ITEM, MATERIAL_NODE, NAME,
                   RECYCLATE_NONE,
                   NODE_CAS, NODE_NAME,
                   NUMBER, REL_MASS, REL_MASS_UNIT, REL_MODE, REL_QUANTITY, REL_RATE, REST,

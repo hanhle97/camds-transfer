@@ -5,13 +5,12 @@ from pathlib import Path
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox, QComboBox,
-    QLineEdit, QPlainTextEdit, QPushButton, QLabel, QTableWidget,
+    QPlainTextEdit, QPushButton, QLabel, QTableWidget,
     QTableWidgetItem, QAbstractItemView, QMessageBox,
 )
 
 from ..camds.import_control import brief
 from ..camds.import_plan import ImportRequest
-from ..camds.material_classifications import classification_code, describe, known_codes, sort_key
 from ..camds import survey
 from ..workers.operations_worker import OperationsWorker
 from .import_dialog import ImportDialog
@@ -156,7 +155,7 @@ class CamdsTab(QWidget):
         if self.editor_open:
             self.status.setText(
                 "An MDS editor is open in the browser, so the tree import cannot start. "
-                "Use Save open draft to keep it, then Leave editor to return to Search — or Close browser session.")
+                "Close the browser window and open a new one.")
             return
         dialog = ImportDialog(self.parsed_root, self)
         if dialog.exec() and dialog.request:

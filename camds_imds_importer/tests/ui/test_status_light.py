@@ -108,3 +108,46 @@ def test_signing_in_from_the_menu_uses_the_browser_the_import_uses(app):
     source = inspect.getsource(MainWindow.login_from_menu)
     assert "self.camds_tab" in source
     assert "CamdsBrowser" not in source, "a second browser would be a separate session"
+
+
+def _window(app):
+    from camds_imds_importer.ui.main_window import MainWindow
+    return MainWindow()
+
+
+def test_the_stage_never_contradicts_the_status(app):
+    """"Status: Ready" beside "Current stage: Validating" was two labels
+    describing one thing from two sources, and one of them was stale."""
+    from camds_imds_importer.core.state_machine import AppState
+
+    window = _window(app)
+    window.state_machine.transition(AppState.DOCUMENT_LOADED)
+    window.state_machine.transition(AppState.PARSING)
+    window.state_machine.transition(AppState.PARSED)
+    window.state_machine.transition(AppState.VALIDATING)
+    window._set_stage("VALIDATING")
+    assert "Validating" in window.stage_label.text()
+
+    window.state_machine.transition(AppState.READY)
+    assert window.status_label.text() == "Status: Ready"
+    assert window.stage_label.text() == "Current stage: Ready"
+
+
+def test_a_worker_still_narrates_while_work_is_running(app):
+    """At rest the state wins, but during work the finer stage is the useful
+    one and must not be flattened to the state's name."""
+    from camds_imds_importer.core.state_machine import AppState
+
+    window = _window(app)
+    window.state_machine.transition(AppState.DOCUMENT_LOADED)
+    window.state_machine.transition(AppState.PARSING)
+    window._set_stage("PDF_READING_PAGES")
+    assert window.stage_label.text() == "Current stage: Pdf Reading Pages"
+
+
+def test_every_resting_state_has_a_lamp_that_is_not_busy():
+    from camds_imds_importer.ui.main_window import LAMP_FOR_STATE, RESTING_STATES
+
+    for state in RESTING_STATES:
+        assert state in LAMP_FOR_STATE, state
+        assert LAMP_FOR_STATE[state] is not Lamp.BUSY, state

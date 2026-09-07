@@ -48,6 +48,20 @@ class WorkerThread(QThread):
         self.worker.run()
 
 
+# States where nothing is running. At rest the stage says what the state says:
+# the two labels describe the same thing, and a worker's last stage text -
+# "Validating" - must not be left standing next to "Ready".
+RESTING_STATES = {
+    AppState.NO_DOCUMENT,
+    AppState.DOCUMENT_LOADED,
+    AppState.PARSED,
+    AppState.READY,
+    AppState.COMPLETED,
+    AppState.FAILED,
+    AppState.CAMDS_AUTHENTICATED,
+    AppState.CAMDS_LOGIN_REQUIRED,
+}
+
 # What each resting state means at a glance. Anything not named here is work in
 # progress, which is what BUSY says.
 LAMP_FOR_STATE = {
@@ -547,9 +561,14 @@ class MainWindow(QMainWindow):
         # A paused import must stay visible; a later state change must not erase it.
         if importing and control is not None and control.paused:
             self.status_label.set("Status: Paused between steps", Lamp.WARN)
+            self._set_stage("PAUSED")
         else:
             self.status_label.set(f"Status: {state.value.replace('_', ' ').title()}",
                                   LAMP_FOR_STATE.get(state, Lamp.BUSY))
+            if state in RESTING_STATES:
+                # While work is running the worker narrates the finer stage; once
+                # it stops, the state is the only thing left that is true.
+                self._set_stage(state.value)
 
     def closeEvent(self, event) -> None:
         # Cancel Playwright on its own event loop before its QThread is destroyed.

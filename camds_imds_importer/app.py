@@ -55,8 +55,11 @@ def check_command() -> int:
 
     from camds_imds_importer.camds.browser_runtime import browsers_root, chromium_present
 
+    from camds_imds_importer.build_info import build_stamp
+
     frozen = getattr(sys, "frozen", False)
     print(f"Build            : {'executable' if frozen else 'source checkout'}")
+    print(f"Built from       : {build_stamp()}")
     print(f"Python           : {sys.version.split()[0]}")
     print(f"Files kept in    : {working_directory()}")
     print(f"BROWSERS_PATH    : {os.environ.get('PLAYWRIGHT_BROWSERS_PATH', '<unset>')}")

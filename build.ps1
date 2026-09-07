@@ -113,6 +113,19 @@ if ($IncludeBrowser) {
 }
 Invoke-Native $venvPython @("-m", "playwright", "install", "chromium") "Installing Chromium"
 
+Step "Stamping the build"
+# So a running executable can say which commit it came from. Three runs were
+# spent on a defect that was already fixed in the source, because nothing on
+# screen could tell a stale build from a fresh one.
+$commit = (& git rev-parse --short HEAD 2>$null)
+if (-not $commit) { $commit = "no git" }
+$dirty = ""
+if (& git status --porcelain 2>$null) { $dirty = " +local changes" }
+$stamp = "$commit$dirty  built $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
+$stampFile = Join-Path $root "camds_imds_importer\build_stamp.txt"
+Set-Content -Path $stampFile -Value $stamp -Encoding utf8
+Note $stamp
+
 Step "Building"
 # A previous build that is still running cannot be replaced, and Windows says
 # only "access denied" about a file it will not name a reason for.
@@ -137,6 +150,8 @@ $arguments = @(
     # JSON and YAML files in the package are not read by the application.
     "--add-data", "$(Join-Path $root 'camds_imds_importer\camds\material_classifications.json');camds_imds_importer/camds"
     "--add-data", "$(Join-Path $root 'camds_imds_importer\ui\assets\camds.ico');camds_imds_importer/ui/assets"
+    # So the running build can name the commit it came from.
+    "--add-data", "$stampFile;camds_imds_importer"
     "--collect-all", "playwright"
     # PySide6 pulls in every Qt module by default. The application uses three.
     "--exclude-module", "PySide6.QtWebEngineCore"

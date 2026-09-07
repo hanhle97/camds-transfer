@@ -98,6 +98,10 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self.state_machine.state_changed.connect(self._apply_state)
         self._apply_state(self.state_machine.state.value)
+        # First line of every log: a stale executable answered three runs with a
+        # defect already fixed in the source, and nothing on screen said so.
+        from ..build_info import build_stamp
+        self.logs_tab.append("INFO", "Build: " + build_stamp())
 
     def _build_ui(self) -> None:
         central = QWidget()

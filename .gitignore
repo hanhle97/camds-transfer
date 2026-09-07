@@ -21,3 +21,6 @@ dist/
 build/
 .venv-build/
 *.spec
+
+# Written by build.ps1 so a running build can name its commit
+camds_imds_importer/build_stamp.txt

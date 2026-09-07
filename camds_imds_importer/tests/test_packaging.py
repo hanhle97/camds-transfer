@@ -129,3 +129,36 @@ def test_the_build_can_report_what_it_resolved(capsys, monkeypatch, tmp_path):
         assert line in printed, printed
     assert str(tmp_path / "browsers") in printed
     assert "FAILED" in printed, "a launch that cannot work must not read as fine"
+
+
+def test_a_build_can_name_the_commit_it_came_from(tmp_path, monkeypatch):
+    """A stale executable answered three runs with a defect already fixed in
+    the source, and nothing on screen could tell it from a fresh one."""
+    from camds_imds_importer import build_info
+
+    monkeypatch.setattr(build_info, "STAMP", tmp_path / "build_stamp.txt")
+    monkeypatch.delattr(sys, "frozen", raising=False)
+    assert build_info.build_stamp() == "running from the source tree"
+
+    (tmp_path / "build_stamp.txt").write_text("abc1234  built 2026-09-07 16:20", encoding="utf-8")
+    assert build_info.build_stamp() == "abc1234  built 2026-09-07 16:20"
+
+
+def test_an_unstamped_executable_says_so_rather_than_claiming_source(tmp_path, monkeypatch):
+    from camds_imds_importer import build_info
+
+    monkeypatch.setattr(build_info, "STAMP", tmp_path / "missing.txt")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    assert "rebuild" in build_info.build_stamp()
+
+
+def test_the_build_ships_the_stamp_and_writes_it_first():
+    script = (Path(__file__).parents[2] / "build.ps1").read_text(encoding="utf-8")
+    assert "build_stamp.txt" in script
+    assert script.index("Stamping the build") < script.index('Step "Building"')
+
+
+def test_the_stamp_is_not_committed():
+    """It describes one machine's build, and would conflict on every rebuild."""
+    ignored = (Path(__file__).parents[2] / ".gitignore").read_text(encoding="utf-8")
+    assert "build_stamp.txt" in ignored

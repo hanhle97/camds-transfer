@@ -473,7 +473,7 @@ class ApiBackend:
             f"matched {len(hits)} entries exactly, not one. " + _offered(rows))
 
     # ------------------------------------------------------------------ release
-    async def release_material(self, ref) -> None:
+    async def release_material(self, ref) -> tuple[str, str]:
         """Publish a Material. Outward-facing, and not reversible from here.
 
         The steps are the release form's own, from `release_material.har`:
@@ -528,6 +528,11 @@ class ApiBackend:
                 f"{mds_id}: CAMDS reports {errors} validation error(s), so it was not "
                 "released. Open it in CAMDS to see them.")
         await self.api.publish_mds(mds_id)
+        # Releasing bumps the version: the 0.01 draft becomes 1. Everything
+        # after this addresses the Material by id *and* version - attaching it,
+        # and reading the tree back - so the new one is what the caller gets.
+        await self.open_saved("Material", (mds_id, ref[1]))
+        return self.root.reference
 
     # ------------------------------------------------------------- read / verify
     async def open_saved(self, kind, ref) -> None:

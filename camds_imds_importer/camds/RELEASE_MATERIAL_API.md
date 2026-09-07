@@ -97,3 +97,16 @@ hardcoded, and `CA_2_111138` / `CA_3_3386` appear only as the recorded example.
 Releasing anything but a Material. Withdrawing a release. What `bStandardMaterials`
 is for — it is called three times and answered `false` every time, and the
 release does not appear to depend on it.
+
+## Releasing changes the version
+
+`0.01` becomes `1`. Everything after a release addresses the Material by id
+*and* version - attaching it under a Component, and reading the tree back - so
+the released version has to replace the draft's. Keeping the draft's ended a
+run in which all 52 Materials had published perfectly:
+
+```
+Pad Printing Ink: expected CA_8_55110886/0.01 ... CAMDS has CA_8_55110886/1
+```
+
+The id does not change, so the new version is read back from the saved tree.

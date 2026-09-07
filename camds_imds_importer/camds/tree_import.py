@@ -373,6 +373,7 @@ class DraftBrowser:
     async def release_material(self, ref):
         raise RuntimeError("Releasing a Material needs the JSON API backend")
 
+
     async def find_existing_component(self, node, resolved):
         """Searching before building needs the JSON API backend."""
         return None
@@ -695,9 +696,13 @@ class TreeImporter:
                     # mapped one is somebody else's to publish, and both take
                     # the `continue` above rather than reaching here.
                     record("release_requested", uid=mat["uid"], ref=ref, name=mat["name"])
-                    await self.io.release_material(ref)
+                    published = await self.io.release_material(ref)
+                    if published:
+                        # Releasing bumps the version. Keeping the draft's would
+                        # attach one MDS and then verify against another.
+                        ref = refs[mat["uid"]] = tuple(published)
                     self.released.append(f"{mat['name']}: released as {'/'.join(ref)}")
-                    record("released", uid=mat["uid"], ref=ref, name=mat["name"])
+                    record("released", uid=mat["uid"], ref=list(ref), name=mat["name"])
             root = request.root
             if root["node_type"] == "MATERIAL":
                 root_ref = refs[root["uid"]]

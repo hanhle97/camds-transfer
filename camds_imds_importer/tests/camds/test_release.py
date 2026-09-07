@@ -37,7 +37,9 @@ class Camds:
         elif name == "findMDSContacterViewList":
             payload = self.contacts
         elif name == "loadMdsTree":
-            payload = {"id": "CA_21_1", "mdsId": "CA_8_9", "mdsCver": 0.01, "text": "Cu99"}
+            # CAMDS bumps the version when an MDS is released.
+            version = 1.0 if "innerPublish" in self.calls else 0.01
+            payload = {"id": "CA_21_1", "mdsId": "CA_8_9", "mdsCver": version, "text": "Cu99"}
         elif name == "loadNodeDate":
             payload = {"data": {"cname": "Cu99"}, "structureVO": {"cindex": 0, "cnodeType": 3,
                                                                   "recycledmaterials": 2},
@@ -158,3 +160,59 @@ async def test_only_a_material_this_run_created_is_released(tmp_path):
     assert verified_at < released_at, "released only after this run verified it"
     reused_at = body.index('record("existing_material_reused"')
     assert reused_at < verified_at, "a reused Material takes the continue above"
+
+
+async def test_releasing_returns_the_version_camds_gave_it():
+    """Releasing bumps 0.01 to 1. Keeping the draft's version attached one MDS
+    and then verified against another - "expected CA_8_.../0.01, CAMDS has
+    CA_8_.../1" ended a run in which all 52 Materials had published fine."""
+    camds = Camds()
+    assert await backend(camds).release_material(("CA_8_9", "0.01")) == ("CA_8_9", "1")
+
+
+async def test_the_new_version_is_what_the_rest_of_the_run_uses(tmp_path):
+    from camds_imds_importer.camds.import_plan import ImportRequest
+    from camds_imds_importer.camds.tree_import import TreeImporter
+
+    attached = []
+
+    class Backend:
+        reporter = None
+
+        async def prepare(self): pass
+        async def read_back_findings(self): return []
+        async def can_reenter_saved(self): return False
+        async def saved_children(self, path, at=(0, 1)): return []
+        async def find_existing_material(self, node): return None
+        async def find_existing_component(self, node, resolved): return None
+        async def create_root(self, node, on_allocated=None, existing=None):
+            self.ref = ("CA_8_9", "0.01") if node["node_type"] == "MATERIAL" else ("CA_5_1", "0.01")
+            if on_allocated:
+                on_allocated(self.ref)
+            return self.ref
+        async def save(self): pass
+        async def add_substance(self, name, node): return node["name"]
+        async def release_material(self, ref): return ("CA_8_9", "1")
+        async def open_saved(self, kind, ref): self.ref = tuple(ref)
+        async def value(self, label): return "Cu99"
+        async def identity(self): return self.ref
+        async def verify_value(self, label, expected): pass
+        async def verify_child_count(self, path, count, at=(0, 1)): pass
+        async def verify_substance(self, path, node, at=(0, 1)): pass
+        async def select(self, path, at=(0, 1)):
+            # Read-back selects the attached Material and asks which MDS it is.
+            if path[-1] == "Cu99" and attached:
+                self.ref = attached[-1]
+        async def add_material(self, path, node, ref, at=(0, 1), by_portion=False, reuse_index=None):
+            attached.append(tuple(ref))
+            self.ref = tuple(ref)
+            return "Cu99"
+
+    root = {"uid": "r", "node_type": "COMPONENT", "name": "Part", "weight_g": 1.0,
+            "children": [{"uid": "m", "node_type": "MATERIAL", "name": "Cu99",
+                          "classification": "1.1.1", "weight_g": 1.0,
+                          "children": [{"uid": "s", "node_type": "SUBSTANCE", "name": "Copper",
+                                        "cas_number": "7440-50-8", "percentage": 100,
+                                        "children": []}]}]}
+    await TreeImporter(Backend(), tmp_path).run(ImportRequest(root), release=True)
+    assert attached == [("CA_8_9", "1")], "the released version, not the draft"

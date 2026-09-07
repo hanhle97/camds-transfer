@@ -76,3 +76,35 @@ def test_the_substance_check_says_why_it_cannot_run(app):
     assert tab.can_check_substances() == "no signed-in CAMDS session"
     assert tab.check_substances() is False
     assert "no signed-in CAMDS session" in tab.status.text()
+
+
+def test_the_connection_lamp_only_ever_follows_the_operations_browser(app):
+    """A credentials test runs in a second browser. It used to light this lamp
+    green, which told the operator an import had a session it did not have."""
+    from types import SimpleNamespace
+
+    from camds_imds_importer.camds.login import LoginStatus
+    from camds_imds_importer.ui.main_window import MainWindow
+
+    window = MainWindow()
+    window.connection_label.set("CAMDS: Not connected", Lamp.IDLE)
+    window.authenticated = False
+
+    window._login_completed(
+        SimpleNamespace(status=LoginStatus.AUTHENTICATED, url="https://catarc.camds.org.cn/",
+                        message=""), "someone")
+
+    assert window.authenticated is False, "the operations browser is still anonymous"
+    assert window.connection_label.lamp is Lamp.IDLE
+    assert "not the operations session" in window.logs_tab.viewer.toPlainText()
+
+
+def test_signing_in_from_the_menu_uses_the_browser_the_import_uses(app):
+    """Otherwise the session would be established where nothing can spend it."""
+    import inspect
+
+    from camds_imds_importer.ui.main_window import MainWindow
+
+    source = inspect.getsource(MainWindow.login_from_menu)
+    assert "self.camds_tab" in source
+    assert "CamdsBrowser" not in source, "a second browser would be a separate session"

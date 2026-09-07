@@ -448,20 +448,23 @@ class MainWindow(QMainWindow):
               self.logs_tab.append("WAIT", "Complete slider/CAPTCHA in the CAMDS browser window")
 
     def _login_completed(self, result: object, username: str) -> None:
+        """Report a credentials test, which is not the operations session.
+
+        This runs in a second browser of its own, so it proves the username and
+        password and nothing else. It used to light the connection lamp green
+        and set `authenticated`, which said the import had a session when the
+        operations browser was still anonymous. That lamp only ever follows the
+        operations browser now, which polls the live page and says so itself.
+
+        The sign-in is not wasted: it writes the shared storage state, so the
+        next operations browser opens already signed in.
+        """
         if result.status == LoginStatus.AUTHENTICATED:
-            self._set_stage("CAMDS_AUTHENTICATED")
-            self.authenticated = True
-            self.connection_label.set("CAMDS: Logged in", Lamp.OK)
-            self.overview_tab.set_connection("Authenticated", username)
-            current = self.state_machine.state
-            if current in {AppState.NO_DOCUMENT, AppState.DOCUMENT_LOADED, AppState.PARSED}:
-                self.state_machine.transition(AppState.CAMDS_AUTHENTICATED)
-            elif current == AppState.READY:
-                self.state_machine.transition(AppState.CAMDS_AUTHENTICATED)
-            self.logs_tab.append("CAMDS", f"CAMDS login successful; authenticated URL: {result.url}")
+            self.logs_tab.append(
+                "CAMDS", f"Credentials accepted for {username} in a test browser "
+                f"({result.url}). This is not the operations session: use CAMDS -> Login "
+                "CAMDS, or Open CAMDS browser, before importing.")
         else:
-            self._set_stage("CAMDS_LOGIN_REQUIRED")
-            self.connection_label.set("CAMDS: Not connected", Lamp.WARN)
             self.logs_tab.append("ERROR", result.message)
 
     def _run_worker(self, worker: QObject) -> QThread:

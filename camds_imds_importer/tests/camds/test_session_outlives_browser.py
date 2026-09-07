@@ -135,3 +135,42 @@ def test_the_tab_asks_for_a_window_instead_of_a_second_session(tmp_path):
     tab.close_browser()
     assert sent == ["open_browser", "close_browser"]
     tab.worker = None
+
+
+async def test_the_window_is_usable_before_camds_finishes_drawing(tmp_path):
+    """CAMDS is a large single-page application on a slow link. Waiting for it
+    held every control disabled behind "Opening CAMDS browser…" for up to three
+    minutes, with the window already on screen."""
+    import asyncio
+
+    worker = OperationsWorker(_state(tmp_path / "state.json"))
+    still_loading = asyncio.Event()
+    opened = []
+    worker.browser_changed = type("S", (), {"emit": lambda _s, v: opened.append(v)})()
+    worker.notice = type("S", (), {"emit": lambda _s, text: None})()
+
+    class Page:
+        def set_default_timeout(self, _ms): pass
+        async def goto(self, *a, **k): await still_loading.wait()
+        async def wait_for_function(self, *a, **k): await still_loading.wait()
+
+    class Context:
+        async def new_page(self): return Page()
+
+    class Browser:
+        async def new_context(self, **options): return Context()
+
+    class Runtime:
+        class chromium:
+            @staticmethod
+            async def launch(**k): return Browser()
+
+    worker._ensure_chromium = lambda: None
+    browser, context, page, operations = await asyncio.wait_for(
+        worker._open_window(Runtime()), timeout=2)
+
+    assert browser is not None and page is not None
+    assert opened == [True], "the window is reported the moment it exists"
+    assert worker._loading is not None and not worker._loading.done()
+    still_loading.set()
+    await asyncio.wait_for(worker._loading, timeout=2)

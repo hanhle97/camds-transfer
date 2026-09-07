@@ -92,6 +92,7 @@ class OperationsWorker(QThread):
         # stays available for anything the recorded API does not cover.
         self.use_api = os.getenv("CAMDS_USE_API", "1") != "0"
         self._verification_code: str | None = None
+        self._loading: asyncio.Task | None = None
         self._code_lock = threading.Lock()
 
     def submit(self, action: str, request, **options) -> None:
@@ -268,20 +269,33 @@ class OperationsWorker(QThread):
         self.notice.emit("Browser installed.")
 
     async def _open_window(self, runtime):
-        """Launch a window on the saved session; its cookies are the same ones."""
+        """Launch a window on the saved session; its cookies are the same ones.
+
+        The window is handed back as soon as it exists. CAMDS is a large
+        single-page application on a slow link, and waiting for it to finish
+        drawing used to hold every control disabled for up to three minutes
+        behind "Opening CAMDS browser…" - with the window already on screen and
+        perfectly usable. It finishes loading in the background, and the session
+        poll reports what the page actually says once it has.
+        """
         await asyncio.to_thread(self._ensure_chromium)
         browser = await runtime.chromium.launch(headless=False)
         options = {"storage_state": str(self.storage)} if self.storage.is_file() else {}
         context = await browser.new_context(**options)
         page = await context.new_page()
         page.set_default_timeout(15_000)
-        try:
-            await self._open_start_page(page)
-        except Exception as exc:
-            self.notice.emit(
-                "CAMDS did not finish loading in time (" + str(exc).splitlines()[0] + "). "
-                "The window is open: let the page finish, then run the operation again.")
         self.browser_changed.emit(True)
+
+        async def load() -> None:
+            try:
+                await self._open_start_page(page)
+            except Exception as exc:
+                self.notice.emit(
+                    "CAMDS is taking a long time to load (" + str(exc).splitlines()[0] + "). "
+                    "The window is open: let the page finish, or sign in there, and carry on.")
+
+        # Kept so it is cancelled with the session rather than outliving it.
+        self._loading = asyncio.create_task(load())
         return browser, context, page, CamdsOperations(page)
 
     async def _close_window(self, browser) -> None:
@@ -384,9 +398,10 @@ class OperationsWorker(QThread):
                                     task = asyncio.create_task(getattr(operations, action)(request))
                     await asyncio.sleep(0.1)
             finally:
-                if task is not None and not task.done():
-                    task.cancel()
-                    await asyncio.gather(task, return_exceptions=True)
+                for pending in (task, self._loading):
+                    if pending is not None and not pending.done():
+                        pending.cancel()
+                        await asyncio.gather(pending, return_exceptions=True)
                 if authenticated:
                     # CAMDS can hand out a fresh cookie during a session, so the
                     # last state is worth more than the one saved at sign-in.

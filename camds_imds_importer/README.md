@@ -28,19 +28,22 @@ instead.
 
 ### The session is not inside the window
 
-The API runs on a Playwright request context of its own, built from the saved
-cookies rather than taken from a browser context. Closing the CAMDS window
-therefore changes nothing: the import, the catalogue check and the status poll
-all keep working with no window open. **Open CAMDS browser** puts another
-window on the same session, and **Close browser window** closes only the
-window. A window is needed for Search, Create, Save, Leave editor, the
-classification wizard and signing in - and is reopened on demand for those.
+The API runs on `context.request`, the browser context's own request object.
+Not a standalone `playwright.request.new_context()`: that is a Node HTTP client
+which resolves DNS itself and knows nothing about the proxy Chromium picked up
+from the system, so on a corporate network every call failed with `getaddrinfo
+ENOTFOUND catarc.camds.org.cn` while the signed-in window beside it worked.
+Taking the request from the browser context inherits the proxy and the live
+cookie jar together, so a sign-in in the window is usable by the next API call
+with nothing copied across.
 
-Cookies flow window to file to request context. A request context holds the
-cookies it was built with, so one built before a sign-in stays anonymous: after
-a login in the window the state is saved and the context rebuilt from it. The
-status poll asks CAMDS through the request context, and falls back to reading
-the page only to notice a sign-in that has not been carried over yet.
+The session is the browser **context**, not the window. Closing a page does not
+close its context, so the import, the catalogue check and the status poll keep
+working with no window open. **Open CAMDS browser** puts another window on the
+same context, and **Close browser window** closes only the page. A window is
+needed for Search, Create, Save, Leave editor, the classification wizard and
+signing in, and is reopened on demand for those. If Chromium itself exits, the
+context is rebuilt from the last saved state.
 
 The API is addressed through a signed-in context rather than a fresh one, because
 `POST /api/login` takes a page-encrypted username and password plus a CAPTCHA:

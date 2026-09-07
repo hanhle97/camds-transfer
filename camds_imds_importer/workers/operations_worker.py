@@ -217,29 +217,26 @@ class OperationsWorker(QThread):
                 "note": "Signed in on this browser session; Search, Create and tree import use it directly."}
 
     # --------------------------------------------------------------- session
-    async def _api_context(self, runtime):
-        """A request context of its own, holding the saved cookies.
+    async def _open_browser(self, runtime):
+        """Launch Chromium and make the one context every CAMDS call uses.
 
-        It is not taken from a browser context, so closing the window does not
-        take the session with it: the import, the catalogue check and the status
-        poll all keep working with no window open at all.
+        The API runs on `context.request`, not on a request context of its own.
+        A standalone one is a Node HTTP client: it resolves DNS itself and knows
+        nothing about the proxy Chromium picked up from the system, so on a
+        corporate network every call died with
+
+            getaddrinfo ENOTFOUND catarc.camds.org.cn
+
+        while the signed-in window beside it worked perfectly. Taking the
+        request from the browser context inherits both the proxy and the live
+        cookie jar, so a sign-in in the window is usable by the next API call
+        with nothing to copy across.
         """
+        await asyncio.to_thread(self._ensure_chromium)
+        browser = await runtime.chromium.launch(headless=False)
         options = {"storage_state": str(self.storage)} if self.storage.is_file() else {}
-        return await runtime.request.new_context(**options)
-
-    async def _adopt_browser_session(self, runtime, api, browser_context):
-        """Carry a sign-in made in the window over to the request context.
-
-        A request context holds the cookies it was built with, so one built
-        before a login stays anonymous however well the window is doing. After a
-        sign-in the state is saved and the context rebuilt from it.
-        """
-        await self._remember_session(browser_context)
-        try:
-            await api.dispose()
-        except Exception:
-            pass
-        return await self._api_context(runtime)
+        context = await browser.new_context(**options)
+        return browser, context
 
     async def _api_status(self, api, was_authenticated: bool):
         """Ask CAMDS itself, with one read-only call the import depends on."""
@@ -268,20 +265,18 @@ class OperationsWorker(QThread):
         install_chromium(on_output=lambda line: self.operation_progress.emit("CAMDS: " + line))
         self.notice.emit("Browser installed.")
 
-    async def _open_window(self, runtime):
-        """Launch a window on the saved session; its cookies are the same ones.
+    async def _open_page(self, context):
+        """Put a window on the context. The context outlives it.
 
-        The window is handed back as soon as it exists. CAMDS is a large
+        Closing a page does not close its context in Playwright, so the session
+        survives the operator closing the window - which is the whole point of
+        keeping the two apart.
+
+        The page is handed back as soon as it exists. CAMDS is a large
         single-page application on a slow link, and waiting for it to finish
         drawing used to hold every control disabled for up to three minutes
-        behind "Opening CAMDS browser…" - with the window already on screen and
-        perfectly usable. It finishes loading in the background, and the session
-        poll reports what the page actually says once it has.
+        behind "Opening CAMDS browser…", with the window already on screen.
         """
-        await asyncio.to_thread(self._ensure_chromium)
-        browser = await runtime.chromium.launch(headless=False)
-        options = {"storage_state": str(self.storage)} if self.storage.is_file() else {}
-        context = await browser.new_context(**options)
         page = await context.new_page()
         page.set_default_timeout(15_000)
         self.browser_changed.emit(True)
@@ -296,35 +291,42 @@ class OperationsWorker(QThread):
 
         # Kept so it is cancelled with the session rather than outliving it.
         self._loading = asyncio.create_task(load())
-        return browser, context, page, CamdsOperations(page)
+        return page, CamdsOperations(page)
 
-    async def _close_window(self, browser) -> None:
+    async def _close_page(self, page) -> None:
         try:
-            await browser.close()
+            await page.close()
         except Exception:
             pass
         self.browser_changed.emit(False)
 
     async def _session(self) -> None:
         async with async_playwright() as runtime:
-            api = await self._api_context(runtime)
             browser = context = page = operations = None
             task = None
             authenticated = False
             try:
-                browser, context, page, operations = await self._open_window(runtime)
+                browser, context = await self._open_browser(runtime)
+                page, operations = await self._open_page(context)
                 self.ready.emit()
                 next_poll = 0.0
                 while not self.stopping.is_set():
                     now = asyncio.get_running_loop().time()
-                    if browser is not None and (not browser.is_connected() or page.is_closed()):
+                    if page is not None and page.is_closed():
                         # The window is the operator's to close. The session is
-                        # not inside it: it is in the request context and the file.
-                        browser = context = page = operations = None
+                        # not inside it: it is in the browser context, which
+                        # stays, cookies and proxy and all.
+                        page = operations = None
                         self.browser_changed.emit(False)
                         self.notice.emit(
                             "CAMDS browser window closed. The signed-in session is kept - "
                             "Open CAMDS browser starts another window on it.")
+                    if not browser.is_connected():
+                        # Chromium itself is gone, so the session went with it.
+                        # Rebuild from the last saved state rather than stop.
+                        self.notice.emit("The CAMDS browser exited; reopening it on the saved session.")
+                        browser, context = await self._open_browser(runtime)
+                        page = operations = None
                     editor_open = operations.editor_open if operations else False
                     if task is not None and task.done():
                         try:
@@ -334,14 +336,10 @@ class OperationsWorker(QThread):
                         task = None
                         next_poll = 0.0
                     if task is None and now >= next_poll and not editor_open:
-                        status = await self._api_status(api, authenticated)
-                        if status != SessionStatus.AUTHENTICATED and page is not None:
-                            # A sign-in just made in the window has not reached
-                            # the request context yet.
-                            if await session_status(page) == SessionStatus.AUTHENTICATED:
-                                api = await self._adopt_browser_session(runtime, api, context)
-                                status = await self._api_status(api, authenticated)
-                        authenticated = await self._note_session(api, status, authenticated)
+                        # One authenticated context, so what the window shows and
+                        # what the API sees can no longer disagree.
+                        status = await self._api_status(context.request, authenticated)
+                        authenticated = await self._note_session(context, status, authenticated)
                         next_poll = now + SESSION_POLL_SECONDS
                     if task is None:
                         try:
@@ -359,18 +357,18 @@ class OperationsWorker(QThread):
                                 self.operation_progress.emit("CAMDS: " + PROGRESS_TEXT[action])
                                 needs_page = action in NEEDS_BROWSER or (
                                     action == "import_tree" and not self.use_api)
-                                if (needs_page or action == "open_browser") and browser is None:
-                                    browser, context, page, operations = await self._open_window(runtime)
+                                if (needs_page or action == "open_browser") and page is None:
+                                    page, operations = await self._open_page(context)
                                 if action == "open_browser":
                                     self.result.emit({
                                         "kind": "open_browser", "identity": "", "editor_open": False,
                                         "note": "CAMDS window open on the current session."})
                                 elif action == "close_browser":
-                                    if browser is not None:
+                                    if page is not None:
                                         if authenticated:
                                             await self._remember_session(context)
-                                        await self._close_window(browser)
-                                        browser = context = page = operations = None
+                                        await self._close_page(page)
+                                        page = operations = None
                                     self.result.emit({
                                         "kind": "close_browser", "identity": "", "editor_open": False,
                                         "note": "Window closed. The CAMDS session is kept."})
@@ -380,7 +378,7 @@ class OperationsWorker(QThread):
                                     # A retry during a run of hours must be
                                     # visible, not silently absorbed.
                                     backend = (ApiBackend(CamdsApi(
-                                        api,
+                                        context.request,
                                         on_retry=lambda text: self.operation_progress.emit(
                                             "CAMDS: " + text)))
                                         if self.use_api else DraftBrowser(operations))
@@ -388,7 +386,7 @@ class OperationsWorker(QThread):
                                                             control=self.control)
                                     task = asyncio.create_task(importer.run(request, resume=options.get("resume", False)))
                                 elif action == "check_substances":
-                                    task = asyncio.create_task(self._check_substances(api, request))
+                                    task = asyncio.create_task(self._check_substances(context.request, request))
                                 elif action == "discover_classifications":
                                     task = asyncio.create_task(discover_material_classifications(
                                         operations, Path("debug") / "material-classifications"))
@@ -402,13 +400,13 @@ class OperationsWorker(QThread):
                     if pending is not None and not pending.done():
                         pending.cancel()
                         await asyncio.gather(pending, return_exceptions=True)
-                if authenticated:
+                if authenticated and context is not None:
                     # CAMDS can hand out a fresh cookie during a session, so the
                     # last state is worth more than the one saved at sign-in.
-                    await self._remember_session(context if context is not None else api)
+                    await self._remember_session(context)
                 if browser is not None:
-                    await self._close_window(browser)
-                try:
-                    await api.dispose()
-                except Exception:
-                    pass
+                    try:
+                        await browser.close()
+                    except Exception:
+                        pass
+                    self.browser_changed.emit(False)

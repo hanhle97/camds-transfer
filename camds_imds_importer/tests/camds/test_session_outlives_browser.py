@@ -71,25 +71,36 @@ async def test_being_unreachable_is_not_evidence_the_session_ended(tmp_path):
     assert await worker._api_status(Down(), True) is SessionStatus.UNKNOWN
 
 
-async def test_a_sign_in_made_in_the_window_reaches_the_request_context(tmp_path):
-    """A request context holds the cookies it was built with, so one built
-    before a login stays anonymous until it is rebuilt from the saved state."""
-    storage = tmp_path / "state.json"
-    worker = OperationsWorker(storage)
-    stale, built = Api(authenticated=False), []
+def test_no_request_context_is_built_outside_the_browser():
+    """The ENOTFOUND regression guard.
 
-    class Runtime:
-        class request:
-            @staticmethod
-            async def new_context(**options):
-                built.append(options)
-                return Api(authenticated=True)
+    A standalone request context is a Node HTTP client: it resolves DNS itself
+    and knows nothing about the proxy Chromium picked up from the system. On a
+    corporate network every CAMDS call died with "getaddrinfo ENOTFOUND
+    catarc.camds.org.cn" while the signed-in window beside it worked. Taking
+    the request from the browser context inherits the proxy - and the live
+    cookie jar, so nothing has to be copied across either.
+    """
+    import inspect
 
-    fresh = await worker._adopt_browser_session(Runtime(), stale, Api())
-    assert stale.disposed, "the anonymous context must not be left behind"
-    assert storage.is_file(), "the window's cookies are saved first"
-    assert built and built[0]["storage_state"] == str(storage)
-    assert await worker._api_status(fresh, False) is SessionStatus.AUTHENTICATED
+    from camds_imds_importer.workers import operations_worker
+
+    source = inspect.getsource(operations_worker)
+    assert "request.new_context" not in source, "a context outside the browser has no proxy"
+    assert "context.request" in source
+
+
+def test_every_camds_call_is_made_on_the_authenticated_context():
+    """One context, so what the window shows and what the API sees agree."""
+    import inspect
+
+    from camds_imds_importer.workers.operations_worker import OperationsWorker
+
+    session = " ".join(inspect.getsource(OperationsWorker._session).split())
+    for call in ("self._api_status(context.request",
+                 "self._check_substances(context.request",
+                 "CamdsApi( context.request"):
+        assert call in session, call
 
 
 def test_only_the_actions_that_draw_a_page_need_a_window():
@@ -151,10 +162,13 @@ async def test_the_window_is_usable_before_camds_finishes_drawing(tmp_path):
 
     class Page:
         def set_default_timeout(self, _ms): pass
+        def is_closed(self): return False
+        async def close(self): pass
         async def goto(self, *a, **k): await still_loading.wait()
         async def wait_for_function(self, *a, **k): await still_loading.wait()
 
     class Context:
+        request = object()
         async def new_page(self): return Page()
 
     class Browser:
@@ -166,8 +180,8 @@ async def test_the_window_is_usable_before_camds_finishes_drawing(tmp_path):
             async def launch(**k): return Browser()
 
     worker._ensure_chromium = lambda: None
-    browser, context, page, operations = await asyncio.wait_for(
-        worker._open_window(Runtime()), timeout=2)
+    browser, context = await asyncio.wait_for(worker._open_browser(Runtime()), timeout=2)
+    page, operations = await asyncio.wait_for(worker._open_page(context), timeout=2)
 
     assert browser is not None and page is not None
     assert opened == [True], "the window is reported the moment it exists"

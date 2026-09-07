@@ -26,7 +26,23 @@ stay put - and only the layer that touches CAMDS is swapped, so both backends
 answer the same twenty-one calls. Set `CAMDS_USE_API=0` to drive the browser DOM
 instead.
 
-The API is addressed through the signed-in browser context, because
+### The session is not inside the window
+
+The API runs on a Playwright request context of its own, built from the saved
+cookies rather than taken from a browser context. Closing the CAMDS window
+therefore changes nothing: the import, the catalogue check and the status poll
+all keep working with no window open. **Open CAMDS browser** puts another
+window on the same session, and **Close browser window** closes only the
+window. A window is needed for Search, Create, Save, Leave editor, the
+classification wizard and signing in - and is reopened on demand for those.
+
+Cookies flow window to file to request context. A request context holds the
+cookies it was built with, so one built before a sign-in stays anonymous: after
+a login in the window the state is saved and the context rebuilt from it. The
+status poll asks CAMDS through the request context, and falls back to reading
+the page only to notice a sign-in that has not been carried over yet.
+
+The API is addressed through a signed-in context rather than a fresh one, because
 `POST /api/login` takes a page-encrypted username and password plus a CAPTCHA:
 sign-in stays manual, everything after it is JSON. It is not only faster, it
 avoids three things the DOM path cannot:

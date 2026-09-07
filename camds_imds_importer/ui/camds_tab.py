@@ -28,6 +28,8 @@ SUBMIT_STATUS = {
     "check_substances": "Looking up every substance of the parsed tree; nothing is created…",
     "import_tree": "Transferring parsed tree; saving each step…",
     "login": "Signing in on this browser session…",
+    "open_browser": "Opening a CAMDS window on the current session…",
+    "close_browser": "Closing the window; the session is kept…",
 }
 
 
@@ -48,10 +50,17 @@ class CamdsTab(QWidget):
         self.last_error = ""
         self.parsed_root = None
         self.session = "UNKNOWN"
+        self.browser_open = False
         root = QVBoxLayout(self)
         bar = QHBoxLayout()
         self.open_button = QPushButton("Open CAMDS browser")
-        self.close_button = QPushButton("Close browser session")
+        self.open_button.setToolTip(
+            "Open a window on the current CAMDS session. The session lives in the app, "
+            "not in the window.")
+        self.close_button = QPushButton("Close browser window")
+        self.close_button.setToolTip(
+            "Close the window only. The CAMDS session is kept, and Search, Create and "
+            "the tree import go on working without it.")
         bar.addWidget(self.open_button)
         bar.addWidget(self.close_button)
         self.sign_in_button = QPushButton("Sign in to CAMDS")
@@ -128,7 +137,7 @@ class CamdsTab(QWidget):
         self.results.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         root.addWidget(self.results)
         self.open_button.clicked.connect(self.open_session)
-        self.close_button.clicked.connect(self.stop_session)
+        self.close_button.clicked.connect(self.close_browser)
         self.search_button.clicked.connect(self.search)
         self.create_button.clicked.connect(self.create)
         self.save_button.clicked.connect(self.save)
@@ -220,7 +229,9 @@ class CamdsTab(QWidget):
         self.status.setText("IMDS node loaded for review. Only this root will be filled; its children are not imported." + (" Material classification is unsupported; automatic Create is unavailable for this classification." if kind == "Material" and index < 0 else ""))
 
     def open_session(self) -> None:
+        """Start the session, or put another window on the one already running."""
         if self.worker is not None:
+            self._submit("open_browser", None)
             return
         self.worker = OperationsWorker(Path(".runtime/camds_storage_state.json"), self)
         self.last_error = ""
@@ -228,6 +239,7 @@ class CamdsTab(QWidget):
         self.worker.operation_progress.connect(self._progress)
         self.worker.node_progress.connect(self._node_progress)
         self.worker.session_changed.connect(self._session_changed)
+        self.worker.browser_changed.connect(self._browser_changed)
         self.worker.login_stage.connect(self.log_message.emit)
         self.worker.notice.connect(self._notice)
         self.worker.result.connect(self._result)
@@ -239,12 +251,21 @@ class CamdsTab(QWidget):
         self._update()
         self.worker.start()
 
+    def close_browser(self) -> None:
+        """Close the window and keep the session. Closing it by hand does the same."""
+        if self.worker is not None:
+            self._submit("close_browser", None)
+
     def stop_session(self) -> None:
         if self.worker:
             self.worker.stop()
             self.busy = True
             self.status.setText("Closing browser. Any unsaved form will not be preserved.")
             self._update()
+
+    def _browser_changed(self, open_now: bool) -> None:
+        self.browser_open = open_now
+        self._update()
 
     def _ready(self) -> None:
         if self.worker is None or self.worker.stopping.is_set():
@@ -415,6 +436,7 @@ class CamdsTab(QWidget):
         self.busy = False
         self.importing = False
         self.session = "UNKNOWN"
+        self.browser_open = False
         self.session_changed.emit(self.session)
         self.editor_open = False
         self.save_button.setEnabled(False)
@@ -423,9 +445,11 @@ class CamdsTab(QWidget):
 
     def _update(self) -> None:
         stopping = self.worker is not None and self.worker.stopping.is_set()
-        self.open_button.setEnabled(self.worker is None)
-        self.close_button.setEnabled(self.worker is not None and not stopping)
         idle = self.worker is not None and not stopping and not self.busy
+        # A window is a view on the session, not the session itself, so opening
+        # and closing one stays available the whole time a session is running.
+        self.open_button.setEnabled(self.worker is None or (idle and not self.browser_open))
+        self.close_button.setEnabled(idle and self.browser_open)
         self.forms.setEnabled(idle and not self.editor_open)
         self.save_button.setEnabled(idle and self.editor_open and not self.last_error)
         # Leaving stays available after a failure: it is the recovery path that

@@ -33,9 +33,13 @@ def test_partial_create_failure_locks_controls_but_allows_close():
     app = QApplication.instance() or QApplication([])
     tab = CamdsTab()
     tab.worker = SimpleNamespace(stopping=threading.Event())
+    # The failure happened in a window that is still open, which is the state
+    # the operator is actually in when they need a way out.
+    tab.browser_open = True
     tab._failed("Field missing", True)
     assert not tab.forms.isEnabled()
     assert tab.close_button.isEnabled()
+    assert tab.leave_button.isEnabled(), "leaving the editor is the recovery path"
     assert "partially filled" in tab.status.text()
     tab.worker = None
     tab.close()

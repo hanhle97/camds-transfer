@@ -314,10 +314,20 @@ indicator, status, stage and state machine all move to "expired" together and
 operations stop until you sign in again. `Test Login` in Settings remains a
 separate isolated check and performs no MDS operations.
 
-- Search Component, Semicomponent, Material, Basic Substance or All MDSs by name,
-  CAMDS ID, part/material number, or CAS as applicable. Choose Own, Published,
-  Accepted or All sources. At least one criterion is required. The current result
-  page is displayed in the app; fixed-column table clones are not duplicated.
+- **What does CAMDS already hold?** asks about every item at once instead of
+  taking one name. For Materials it looks up each distinct Material the report
+  declares; for Components, either every Component carrying a ten-digit CAMDS
+  number or a list pasted from wherever the operator had it - anything that is
+  not a digit separates the numbers.
+- The table gives, per item: what was looked for, its number, the CAMDS id and
+  version found, how many released versions matched, and the newest creation
+  date. Only whole-numbered versions count: 0.01 is a draft, and reporting one
+  would say CAMDS holds a Material when what it holds is an abandoned attempt
+  at it.
+- The search matches loosely - "EPDM" answers with "TPV - (EPDM + PP)" too - so
+  a match is a row whose number equals the one asked for, or whose name equals
+  it exactly when there is no number.
+
 `DRY_RUN` remains a local plan only. `IMPORT_TREE` opens the full transfer review. Delete, Send,
 Submit, Propose, attachment upload and Module creation are not automated.
 No generic "Confirm" handler is used: classification-wizard Next is distinct

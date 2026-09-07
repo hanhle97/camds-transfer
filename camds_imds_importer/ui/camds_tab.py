@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 from ..camds.import_control import brief
 from ..camds.import_plan import ImportRequest
 from ..camds.material_classifications import classification_code, describe, known_codes, sort_key
-from ..camds.operations import SearchRequest, KINDS
+from ..camds import survey
 from ..workers.operations_worker import OperationsWorker
 from .import_dialog import ImportDialog
 
@@ -94,16 +94,21 @@ class CamdsTab(QWidget):
         root.addWidget(self.status)
         self.forms = QWidget()
         forms_layout = QHBoxLayout(self.forms)
-        search_group = QGroupBox("Search CAMDS")
+        search_group = QGroupBox("What does CAMDS already hold?")
         search_form = QFormLayout(search_group)
         self.search_kind = QComboBox()
-        self.search_kind.addItems(KINDS)
-        self.search_name, self.search_id, self.search_number, self.search_cas = (QLineEdit() for _ in range(4))
+        self.search_kind.addItems(("Material", "Component"))
         self.search_source = QComboBox()
-        self.search_source.addItems(("Own", "Published", "Accepted", "All"))
-        for label, widget in (("Type", self.search_kind), ("Name", self.search_name), ("CAMDS ID", self.search_id), ("Part / Material No.", self.search_number), ("CAS", self.search_cas), ("Source", self.search_source)):
-            search_form.addRow(label, widget)
-        self.search_button = QPushButton("Search")
+        self.search_source.addItems(("From the parsed report", "From a pasted list"))
+        self.pasted = QPlainTextEdit()
+        self.pasted.setPlaceholderText(
+            "Component numbers, one per line or separated by commas. "
+            "Anything that is not a digit separates them.")
+        self.pasted.setMaximumHeight(90)
+        search_form.addRow("Look up", self.search_kind)
+        search_form.addRow("Taken from", self.search_source)
+        search_form.addRow("List", self.pasted)
+        self.search_button = QPushButton("Search CAMDS")
         search_form.addRow(self.search_button)
         forms_layout.addWidget(search_group)
         root.addWidget(self.forms)
@@ -119,15 +124,18 @@ class CamdsTab(QWidget):
         self.resume_button.clicked.connect(self.resume_import)
         self.stop_button.clicked.connect(self.stop_import)
         self.search_kind.currentTextChanged.connect(self._kind_changed)
+        self.search_source.currentTextChanged.connect(self._kind_changed)
         self._kind_changed()
         self._update()
 
     def _kind_changed(self, *_args) -> None:
-        substance = self.search_kind.currentText() == "Basic Substance"
-        self.search_cas.setEnabled(substance)
-        self.search_id.setEnabled(not substance)
-        self.search_number.setEnabled(not substance)
-        self.search_source.setEnabled(not substance)
+        """A pasted list is component numbers; a Material has no such number."""
+        component = self.search_kind.currentText() == "Component"
+        self.search_source.setEnabled(component)
+        if not component:
+            self.search_source.setCurrentText("From the parsed report")
+        self.pasted.setEnabled(component and
+                               self.search_source.currentText() == "From a pasted list")
 
     def set_document(self, document) -> None:
         self.parsed_root = document.root.to_dict()
@@ -300,8 +308,25 @@ class CamdsTab(QWidget):
         self._update()
 
     def search(self) -> None:
-        substance = self.search_kind.currentText() == "Basic Substance"
-        self._submit("search", SearchRequest(self.search_kind.currentText(), self.search_name.text().strip(), "" if substance else self.search_id.text().strip(), "" if substance else self.search_number.text().strip(), self.search_cas.text().strip() if substance else "", self.search_source.currentText()))
+        """Ask CAMDS about every Material or Component at once."""
+        kind = self.search_kind.currentText()
+        if self.search_source.currentText() == "From a pasted list":
+            items = survey.pasted(self.pasted.toPlainText())
+            if not items:
+                self.status.setText("Paste some component numbers first.")
+                return
+        elif self.parsed_root is None:
+            self.status.setText("Parse an IMDS PDF, or paste a list instead.")
+            return
+        else:
+            items = (survey.materials(self.parsed_root) if kind == "Material"
+                     else survey.components(self.parsed_root))
+            if not items:
+                self.status.setText(
+                    "The report names no Material to look up." if kind == "Material" else
+                    "No Component in the report carries a ten-digit CAMDS number.")
+                return
+        self._submit("search", {"kind": kind, "items": items})
 
     def discover_classifications(self) -> None:
         """Record the material classification wizard so more than 1.1.1 can be supported."""

@@ -40,10 +40,12 @@ def main() -> int:
     if args.command == "parse":
         return parse_command(args.input_pdf, args.output_dir)
     from PySide6.QtWidgets import QApplication
+    from camds_imds_importer.ui import branding
     from camds_imds_importer.ui.main_window import MainWindow
 
     application = QApplication(sys.argv)
     application.setApplicationName("CAMDS IMDS Importer")
+    branding.apply(application)
     window = MainWindow()
     window.show()
     return application.exec()

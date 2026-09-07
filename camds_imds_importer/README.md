@@ -267,6 +267,12 @@ python -m venv .venv
 `playwright install chromium` downloads its own browser, a few hundred MB. A
 Chrome or Edge already on the machine is not used.
 
+The window and taskbar icon is CAMDS's own mark, taken from
+`catarc.camds.org.cn/favicon.ico` and shipped in `ui/assets/camds.ico`. It
+belongs to CATARC, not to this project; it is here so the window is easy to
+pick out, and it does not make this an official CAMDS tool. 32x32 is the only
+size CAMDS publishes, so Windows scales it up for the larger taskbar slots.
+
 ### What travels with the repository, and what does not
 
 | | Where | Travels |

@@ -87,6 +87,28 @@ staying quiet.
 It runs the same `resolve_substance` the import runs, not a second copy of the
 rule, so passing it means something.
 
+### Reusing a Material already in CAMDS
+
+Creating one per run filled the account with duplicates. A Material is looked
+up first, and only created when it is not there. What makes it the same one is
+what it is: **the same name, the same substances, and the same portion of
+each**.
+
+A name is not an identity - one report calls two different Materials "Ep-Ni" -
+so the composition settles it. A Material No. is not required, because the
+reports that prompted this carry none at all; where there is one it fills the
+second search field and narrows the result rather than deciding it.
+
+`loadMdsTree` carries each substance's CAS and English name but no portion, so
+every substance of a candidate is opened for that. Substances are compared as
+a set: the order they were added in is not part of what a Material is. Rest is
+compared as a mode, because CAMDS computes what it resolves to.
+
+Only whole-numbered versions count. 1, 2 and 6 are released; 0.01 is a draft
+somebody left half-built, and attaching one would attach an unfinished
+composition. Anything short of a full match means a new Material: a duplicate
+is a nuisance, the wrong composition attached to a part is wrong data.
+
 Endpoints, fields and their evidence are in
 [CREATE_COMPONENT_API.md](camds/CREATE_COMPONENT_API.md). Mass, quantity and
 every portion live on the parent relation (`structureVO`), not on the node, so

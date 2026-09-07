@@ -61,11 +61,13 @@ class ImportDialog(QDialog):
         layout.addWidget(self.preview)
         self.reuse = QCheckBox(
             "Reuse Materials already in CAMDS instead of creating another "
-            "(matched on Material No. and confirmed by name; only whole-numbered versions)")
+            "(same name, same substances, same portions; only whole-numbered versions)")
         self.reuse.setChecked(True)
         self.reuse.setToolTip(
             "Creating a Material per run is what fills an account with duplicates of the "
-            "same thing. Unchecked, every Material in the report is created afresh.")
+            "same thing. A name is not an identity - one report calls two Materials "
+            "\"Ep-Ni\" - so the composition decides. Unchecked, every Material in the "
+            "report is created afresh.")
         layout.addWidget(self.reuse)
         self.release = QCheckBox(
             "Release each Material this run creates (publishes it in CAMDS)")

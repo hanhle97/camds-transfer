@@ -58,6 +58,30 @@ def _offered(rows, limit=6) -> str:
     return f"CAMDS offered {len(rows)} row(s): {shown}{more}."
 
 
+def portion_disagreement(expected: dict, relation: dict) -> str | None:
+    """How a saved portion differs from the declared one, or None if it does not.
+
+    Rest is compared as a mode and not as a number: "Rest" means whatever the
+    siblings leave over, so CAMDS computes the value itself and demanding it
+    back asks CAMDS to agree with an arithmetic it did not perform.
+
+    One comparison, used both to verify what was written and to recognise a
+    Material already in CAMDS. Two copies of a rule drift apart.
+    """
+    if str(relation.get(REL_MODE)) != str(expected[REL_MODE]):
+        return f"portion mode: {relation.get(REL_MODE)} != {expected[REL_MODE]}"
+    if expected[REL_MODE] == REST:
+        return None
+    for field, wanted in expected.items():
+        actual = relation.get(field)
+        if isinstance(wanted, (int, float)):
+            if actual is None or abs(float(actual) - float(wanted)) > 1e-8:
+                return f"proportion mismatch: {field} {actual} != {wanted}"
+        elif str(actual) != str(wanted):
+            return f"proportion mismatch: {field}"
+    return None
+
+
 def named(value) -> dict:
     """Only write a number when the report actually carries one."""
     return {NUMBER: value} if value else {}
@@ -178,36 +202,80 @@ class ApiBackend:
     async def find_existing_material(self, node) -> tuple[str, str] | None:
         """The Material already in CAMDS that this node describes, if any.
 
-        Creating one per run is what filled the account with duplicates. Reusing
-        needs certainty about identity, and the search rows do not carry a name:
-        they carry `mdsId`, `symbol` and `version`. So the Material No. is the
-        key, and the name is confirmed afterwards by reading the saved tree.
+        Creating one per run is what filled the account with duplicates. What
+        makes a Material the same one, by instruction, is what it is: the same
+        name, the same substances, and the same portion of each. A Material No.
+        is not required - the reports that prompted this carry none at all - and
+        where there is one it narrows the search rather than deciding it.
 
-        Only whole-numbered versions count. A version like 0.01 is a draft that
-        somebody, possibly this tool, left half-built; 1, 2, 6 are the released
-        ones. Reusing a draft would attach an unfinished composition.
+        The composition is what settles it, because a name is not an identity:
+        two different Materials are called "Ep-Ni" in one report alone. So a
+        candidate is opened and compared substance by substance, and the first
+        disagreement ends it.
 
-        Returns None whenever identity is not certain, and the caller creates a
-        new Material. A duplicate is a nuisance; the wrong composition attached
-        to a part is wrong data.
+        Only whole-numbered versions count. 1, 2, 6 are released; 0.01 is a
+        draft somebody left half-built, possibly this tool, and attaching one
+        would attach an unfinished composition.
+
+        Returns None whenever the match is not certain. A duplicate is a
+        nuisance; the wrong composition attached to a part is wrong data.
         """
+        name = str(node.get("name") or "").strip()
+        substances = [c for c in node.get("children") or []
+                      if c.get("node_type") == "SUBSTANCE"]
+        if not name or not substances:
+            return None
         number = str(node.get("material_number") or "").strip()
-        if not number:
-            return None  # nothing that identifies it; a name search cannot confirm
-        rows = await self.api.find_material(symbol=number)
+        # Both fields when the report carries a code: it narrows the search,
+        # and CAMDS matches loosely, so it never decides anything on its own.
+        rows = await self.api.find_material(name=name, symbol=number)
+
         released = []
         for row in rows:
-            if str(row.get("symbol") or "").strip() != number:
-                continue
             version = str(row.get("version") or "").strip()
-            if version.isdigit() and row.get("mdsId"):
-                released.append((int(version), str(row["mdsId"])))
-        wanted = str(node.get("name") or "").strip().casefold()
+            if not version.isdigit() or not row.get("mdsId"):
+                continue
+            if number and str(row.get("symbol") or "").strip() != number:
+                continue
+            released.append((int(version), str(row["mdsId"])))
+
         for version, mds_id in sorted(released, reverse=True):
-            tree = await self.api.load_tree(mds_id)
-            if str(tree.get("text") or "").strip().casefold() == wanted:
+            if await self._same_material(mds_id, name, substances):
                 return mds_id, str(version)
         return None
+
+    async def _same_material(self, mds_id: str, name: str, substances: list) -> bool:
+        """Whether a saved Material is made of what the report says it is."""
+        tree = await self.api.load_tree(mds_id)
+        if str(tree.get("text") or "").strip().casefold() != name.casefold():
+            return False
+        saved = tree.get("children") or []
+        if len(saved) != len(substances):
+            return False
+
+        # loadMdsTree carries the CAS and the English name, but no portion, so
+        # each substance has to be opened for that.
+        remaining = list(saved)
+        for wanted in substances:
+            cas = real_cas(wanted)
+            label = str(wanted.get("name") or "").strip().casefold()
+            found = None
+            for candidate in remaining:
+                if cas:
+                    if str(candidate.get("cascode") or "").strip() == cas:
+                        found = candidate
+                        break
+                elif str(candidate.get("cenName") or candidate.get("text") or "").strip().casefold() == label:
+                    found = candidate
+                    break
+            if found is None:
+                return False
+            remaining.remove(found)
+            view = await self.api.load_view(addressable(found["id"]))
+            if portion_disagreement(portion(*self._portion(wanted)),
+                                    view.get("structureVO") or {}):
+                return False
+        return True
 
     async def find_existing_component(self, node, resolved) -> tuple[str, str] | None:
         """The Component already in CAMDS that this node is, if any.
@@ -644,19 +712,11 @@ class ApiBackend:
         """
         expected = portion(*self._portion(node))
         relation = (self.view or {}).get("structureVO") or {}
-        if str(relation.get(REL_MODE)) != str(expected[REL_MODE]):
-            raise CamdsApiError(f"Saved {what} portion mode: {relation.get(REL_MODE)} "
-                                f"!= {expected[REL_MODE]}")
+        disagreement = portion_disagreement(expected, relation)
+        if disagreement:
+            raise CamdsApiError(f"Saved {what} {disagreement}")
         if expected[REL_MODE] == REST:
-            return self._compare_rest(node, relation, what)
-        for field, wanted in expected.items():
-            actual = relation.get(field)
-            if isinstance(wanted, (int, float)):
-                if actual is None or abs(float(actual) - float(wanted)) > 1e-8:
-                    raise CamdsApiError(f"Saved {what} proportion mismatch: {field} "
-                                        f"{actual} != {wanted}")
-            elif str(actual) != str(wanted):
-                raise CamdsApiError(f"Saved {what} proportion mismatch: {field}")
+            self._compare_rest(node, relation, what)
 
     def _compare_rest(self, node, relation, what) -> None:
         """Report, but do not refuse, a remainder that differs from the report's.

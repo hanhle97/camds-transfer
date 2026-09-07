@@ -126,12 +126,22 @@ def _line_groups(words: list[dict[str, Any]], tolerance: float = 2.0) -> list[li
     return groups
 
 
+# The tree level, as the left column prints it. Up to level 9 the branch and
+# the number are separated - "|- 8" - and arrive as two words. From level 10 the
+# extra digit takes the space and they run together as "|-10", one word that no
+# longer looks like a number. Reading only bare digits silently dropped every
+# row below level 9, and their text was absorbed into the last row that had been
+# recognised, which is what turned a Component into a Material full of substances
+# whose names had been run together.
+LEVEL_MARKER = re.compile(r"^(?:\|-)?(\d{1,2})$")
+
+
 def _marker(line: list[dict[str, Any]]) -> tuple[int, float] | None:
     left = [word for word in line if float(word["x0"]) < 64.0]
     for word in left:
-        value = str(word["text"])
-        if value.isdigit() and 1 <= int(value) <= 99:
-            return int(value), float(word["top"])
+        found = LEVEL_MARKER.match(str(word["text"]))
+        if found and 1 <= int(found.group(1)) <= 99:
+            return int(found.group(1)), float(word["top"])
     return None
 
 

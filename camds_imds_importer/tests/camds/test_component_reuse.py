@@ -117,4 +117,4 @@ def test_a_matched_subtree_is_attached_and_not_walked_into():
     assert 'if node["uid"] in matched:\n                        return' in body, \
         "paths must stop at an attached subtree"
     assert "add_component_reference" in body
-    assert "saved Component reference mismatch" in body, "read-back checks identity"
+    assert "expected the Component " in body, "read-back checks identity, and says so"

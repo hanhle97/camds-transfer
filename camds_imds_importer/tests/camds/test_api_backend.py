@@ -660,3 +660,30 @@ async def test_resume_fills_a_node_an_interrupted_run_left_unnamed(tmp_path):
     await TreeImporter(backend(camds), tmp_path).run(ImportRequest(tree()), resume=True)
     assert len(_components(camds)) == 2, "no second child beside the unnamed one"
     assert sorted(n["data"]["cname"] for n in _components(camds)) == ["Child", "Parent"]
+
+
+@pytest.mark.parametrize("value, sent", [
+    (6.5e-05, "0.000065"),      # the mass that was stored as 6.5 g
+    (0.0000066, "0.0000066"),
+    (1e-12, "0.000000000001"),
+    (3000, "3000"),             # normalize alone would make this 3E+3
+    (2.0, "2"),                 # the recorded quantity is "5", not "5.0"
+    (7.98, "7.98"),
+    (0.784347, "0.784347"),
+    (0.0, "0"),
+])
+def test_a_number_is_written_the_way_the_browser_writes_it(value, sent):
+    """format(x, ".12g") wrote 0.000065 as "6.5e-05". CAMDS read the leading
+    6.5 and discarded the exponent, so a mass of 0.065 mg was stored as 6.5 g -
+    a hundred thousand times too much, silently, in a declared mass."""
+    from camds_imds_importer.camds.api_backend import number
+
+    assert number(value) == sent
+
+
+def test_no_number_is_ever_written_in_scientific_notation():
+    """The whole class of the defect, not just the value that exposed it."""
+    from camds_imds_importer.camds.api_backend import number
+
+    for value in (1e-30, 6.5e-05, 1e20, 1.5e16, 0.1 + 0.2):
+        assert "e" not in number(value).lower(), (value, number(value))

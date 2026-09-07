@@ -849,15 +849,24 @@ class TreeImporter:
                             # tree points at the Component that was matched. Its
                             # contents are its own MDS's business.
                             await self.io.select(path + [names[child["uid"]]], at=at(child["uid"]))
-                            if await self.io.identity() != tuple(matched[child["uid"]]):
+                            saved = await self.io.identity()
+                            if saved != tuple(matched[child["uid"]]):
                                 raise RuntimeError(
-                                    f"{child['name']}: saved Component reference mismatch")
+                                    f"{child['name']}: expected the Component "
+                                    f"{'/'.join(matched[child['uid']])} under "
+                                    f"{' / '.join(path)}, CAMDS has {'/'.join(saved)}")
                         elif child["node_type"] in ("COMPONENT", "SEMICOMPONENT"):
                             await verify(child, path + [child["name"]], node["node_type"])
                         else:
                             await self.io.select(path + [names[child["uid"]]], at=at(child["uid"]))
-                            if await self.io.identity() != tuple(refs[child["uid"]]):
-                                raise RuntimeError("Saved Material reference mismatch")
+                            saved = await self.io.identity()
+                            if saved != tuple(refs[child["uid"]]):
+                                # Name what was looked at and what was found.
+                                # "reference mismatch" on its own left a failed
+                                # run with nothing to diagnose it from.
+                                raise RuntimeError(
+                                    f"{child['name']}: expected {'/'.join(refs[child['uid']])} "
+                                    f"under {' / '.join(path)}, CAMDS has {'/'.join(saved)}")
                             if node["node_type"] == "SEMICOMPONENT":
                                 await self.io.verify_proportion(child, "Material")
                             else:

@@ -15,3 +15,9 @@ output/
 !camds_imds_importer/tests/**/*.pdf
 # Scratch pytest run directories
 .pytest-*/
+
+# PyInstaller output and its build environment
+dist/
+build/
+.venv-build/
+*.spec

@@ -30,7 +30,24 @@ def parse_command(input_pdf: Path, output_dir: Path | None) -> int:
     return 0
 
 
+def working_directory() -> Path:
+    """Where `config/`, `.runtime/` and `output/` are kept.
+
+    Those paths are relative, which is right when the app is run from a checkout.
+    A built executable can be started from anywhere - a Start-menu shortcut runs
+    it from `C:\\Windows\\system32` - and the reviewed mappings, the saved session
+    and the import journals would then be written wherever the shortcut happened
+    to point. Beside the executable is a place the operator can find again.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).parent
+    return Path.cwd()
+
+
 def main() -> int:
+    import os
+
+    os.chdir(working_directory())
     parser = argparse.ArgumentParser(description="Convert an IMDS MDS Report PDF into canonical JSON")
     subparsers = parser.add_subparsers(dest="command")
     parse_parser = subparsers.add_parser("parse", help="Parse an IMDS report")

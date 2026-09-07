@@ -16,7 +16,9 @@ STAMP = Path(__file__).with_name("build_stamp.txt")
 def build_stamp() -> str:
     """The commit and time this executable was built from, or the source tree."""
     if STAMP.is_file():
-        text = STAMP.read_text(encoding="utf-8").strip()
+        # lstrip of the byte-order mark: a stamp written by an older build.ps1
+        # carries one, and it shows up in front of the commit on screen.
+        text = STAMP.read_text(encoding="utf-8").lstrip("﻿").strip()
         if text:
             return text
     if getattr(sys, "frozen", False):

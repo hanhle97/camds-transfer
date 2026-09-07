@@ -120,10 +120,15 @@ Step "Stamping the build"
 $commit = (& git rev-parse --short HEAD 2>$null)
 if (-not $commit) { $commit = "no git" }
 $dirty = ""
-if (& git status --porcelain 2>$null) { $dirty = " +local changes" }
+# Only tracked changes make a build differ from its commit. An untracked
+# file beside the tree - a screenshot, a log - is not in the executable.
+if (& git status --porcelain --untracked-files=no 2>$null) { $dirty = " +local changes" }
 $stamp = "$commit$dirty  built $(Get-Date -Format 'yyyy-MM-dd HH:mm')"
 $stampFile = Join-Path $root "camds_imds_importer\build_stamp.txt"
-Set-Content -Path $stampFile -Value $stamp -Encoding utf8
+# Written without a byte-order mark: Set-Content -Encoding utf8 puts one
+# there on PowerShell 5.1, and it was displayed as a stray character in
+# front of the commit.
+[IO.File]::WriteAllText($stampFile, $stamp, (New-Object Text.UTF8Encoding $false))
 Note $stamp
 
 Step "Building"

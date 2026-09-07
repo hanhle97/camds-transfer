@@ -144,6 +144,25 @@ def test_a_build_can_name_the_commit_it_came_from(tmp_path, monkeypatch):
     assert build_info.build_stamp() == "abc1234  built 2026-09-07 16:20"
 
 
+def test_a_stamp_written_with_a_byte_order_mark_reads_clean(tmp_path, monkeypatch):
+    """PowerShell 5.1's Set-Content -Encoding utf8 writes one, and it was shown
+    as a stray character in front of the commit."""
+    from camds_imds_importer import build_info
+
+    stamp = tmp_path / "build_stamp.txt"
+    stamp.write_bytes("﻿782a212  built 2026-09-08 06:52".encode("utf-8"))
+    monkeypatch.setattr(build_info, "STAMP", stamp)
+    assert build_info.build_stamp() == "782a212  built 2026-09-08 06:52"
+
+
+def test_an_untracked_file_does_not_make_a_build_look_modified():
+    """A screenshot beside the tree is not in the executable."""
+    script = (Path(__file__).parents[2] / "build.ps1").read_text(encoding="utf-8")
+    assert "git status --porcelain --untracked-files=no" in script
+    assert "UTF8Encoding $false" in script, "a stamp without a byte-order mark"
+    assert "Set-Content -Path $stampFile" not in script
+
+
 def test_an_unstamped_executable_says_so_rather_than_claiming_source(tmp_path, monkeypatch):
     from camds_imds_importer import build_info
 

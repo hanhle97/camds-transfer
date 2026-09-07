@@ -252,12 +252,37 @@ from the editor's Next/Save navigation.
 
 ## Setup and launch
 
+**Python 3.11 or newer** - `StrEnum` is used throughout, and 3.10 fails at
+import. Install Python and Git first on a machine that does not have them.
+
 ```powershell
+git clone https://github.com/hanhle97/camds-transfer.git
+cd camds-transfer
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r camds_imds_importer\requirements.txt
 .\.venv\Scripts\python.exe -m playwright install chromium
 .\.venv\Scripts\python.exe -m camds_imds_importer.app
 ```
+
+`playwright install chromium` downloads its own browser, a few hundred MB. A
+Chrome or Edge already on the machine is not used.
+
+### What travels with the repository, and what does not
+
+| | Where | Travels |
+|---|---|---|
+| Application and substance choices | `config/*.json` | **yes**, tracked |
+| CAMDS sign-in | `.runtime/camds_storage_state.json` | no - sign in again, and the CAPTCHA means by hand |
+| Import journals | `output/camds_imports/*.jsonl` | no |
+| Supplier IMDS PDFs | anywhere | no - customer data, and an input rather than source |
+
+The journal is what makes **Resume** work, so a run interrupted on one machine
+cannot be resumed on another unless that `.jsonl` is copied across by hand. Its
+filename is a fingerprint of the parsed tree, so it has to keep the name it has.
+
+Nothing in `config/` is a credential, and nothing has to be filled in before
+the first launch: the app parses a PDF and runs its whole preflight with no
+CAMDS session, and asks for one only when an operation touches CAMDS.
 
 The parser remains available as a CLI:
 

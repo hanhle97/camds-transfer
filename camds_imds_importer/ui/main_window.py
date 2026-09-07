@@ -25,7 +25,6 @@ from ..workers.parser_worker import ParserWorker
 from ..workers.validation_worker import ValidationWorker
 from .logs_tab import LogsTab
 from .status_light import Lamp, StatusLight
-from .mapping_tab import MappingTab
 from .overview_tab import OverviewTab
 from .progress_tab import ProgressTab
 from .settings_dialog import SettingsDialog
@@ -145,7 +144,6 @@ class MainWindow(QMainWindow):
         self.overview_tab = OverviewTab()
         self.tree_tab = TreeTab()
         self.validation_tab = ValidationTab()
-        self.mapping_tab = MappingTab()
         self.progress_tab = ProgressTab()
         self.logs_tab = LogsTab()
         self.camds_tab = CamdsTab()
@@ -155,7 +153,7 @@ class MainWindow(QMainWindow):
         self.camds_tab.session_changed.connect(self._camds_session_changed)
         self.camds_tab.login_required.connect(self.login_from_menu)
         self.camds_tab.session_ready.connect(self._camds_session_ready)
-        for title, widget in (("Overview", self.overview_tab), ("MDS Tree", self.tree_tab), ("Validation", self.validation_tab), ("CAMDS Mapping", self.mapping_tab), ("CAMDS Search / Create", self.camds_tab), ("Progress", self.progress_tab), ("Logs", self.logs_tab)):
+        for title, widget in (("Overview", self.overview_tab), ("MDS Tree", self.tree_tab), ("Validation", self.validation_tab), ("CAMDS Search / Create", self.camds_tab), ("Progress", self.progress_tab), ("Logs", self.logs_tab)):
             self.tabs.addTab(widget, title)
         root.addWidget(self.tabs)
         self.setCentralWidget(central)

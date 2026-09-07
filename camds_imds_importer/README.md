@@ -23,7 +23,7 @@ A Windows desktop application that converts native-text IMDS MDS Report PDFs int
 The transfer runs over the **CAMDS JSON API** by default. `TreeImporter` itself
 is unchanged - journal, progress, Pause/Stop, resume and substance merging all
 stay put - and only the layer that touches CAMDS is swapped, so both backends
-answer the same eighteen calls. Set `CAMDS_USE_API=0` to drive the browser DOM
+answer the same twenty-one calls. Set `CAMDS_USE_API=0` to drive the browser DOM
 instead.
 
 The API is addressed through the signed-in browser context, because
@@ -94,8 +94,10 @@ parent type: a Material under a **Component** carries a Mass in grams, while the
 same Material under a **Semicomponent** carries a Proportion. That Proportion is
 the widget the Substance path already uses - radio values 1 From-To, 2 Fixed,
 3 Rest - so both share one implementation. A Semicomponent nested inside another
-Semicomponent is still refused: the toolbar offers it but the insertion was never
-exercised. See
+Semicomponent is declared the same way, by portion: the report gives
+`Contact Bimetal | 20291057 | Rest 98.74` and no mass at all. The API writes
+that; the browser backend refuses, because no control for a nested portion has
+ever been observed there. See
 [SEMICOMPONENT_APPLICATION_DISCOVERY.md](camds/SEMICOMPONENT_APPLICATION_DISCOVERY.md).
 
 ### Applications
@@ -124,8 +126,15 @@ Every resolution is written back to `config/application_mapping.json` with its
 wording, its source and a timestamp, so the next run is deterministic. A stored
 pairing is re-checked against the live wording before use: if CAMDS now shows
 different text for that value, or no longer offers it, that application is
-skipped instead of confirming something nobody approved. A Material-level application is still
-refused - only the per-substance rows have been observed.
+skipped instead of confirming something nobody approved. Re-recording keeps the
+original provenance, so a match the software made never comes to look like one
+a person approved.
+
+Only the per-substance rows have been observed, so an application declared on a
+Material, Component or Semicomponent has no control to write into. It follows
+the same rule as one whose wording does not match: left unset and reported,
+before the run touches CAMDS so a later failure cannot hide it. The report's
+own tree carries 48 of these, all on GLASS.
 
 The Confirm button in that dialog had never been exercised during discovery, so
 this write path is implemented from the recorded UI but its persistence is not

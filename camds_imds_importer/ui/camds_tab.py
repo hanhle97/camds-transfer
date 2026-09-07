@@ -25,7 +25,6 @@ SUBMIT_STATUS = {
     "save": "Saving open draft…",
     "leave_editor": "Leaving the editor and returning to Search…",
     "discover_classifications": "Opening the classification wizard to record it; nothing is created…",
-    "api_check": "Checking the CAMDS API session; nothing is created…",
     "check_substances": "Looking up every substance of the parsed tree; nothing is created…",
     "import_tree": "Transferring parsed tree; saving each step…",
     "login": "Signing in on this browser session…",
@@ -59,16 +58,13 @@ class CamdsTab(QWidget):
         bar.addWidget(self.sign_in_button)
         self.import_tree_button = QPushButton("Import parsed tree…")
         bar.addWidget(self.import_tree_button)
-        self.api_button = QPushButton("Test API session")
-        bar.addWidget(self.api_button)
-        self.check_substances_button = QPushButton("Check substances")
-        self.check_substances_button.setToolTip(
-            "Look up every distinct substance of the parsed tree in the CAMDS catalogue. "
-            "Read-only: nothing is created. An unresolved substance stops an import, and "
-            "this finds them all in minutes instead of hours in.")
-        bar.addWidget(self.check_substances_button)
-        self.discover_button = QPushButton("Record classification wizard")
-        bar.addWidget(self.discover_button)
+        # Two buttons used to sit here. Checking the substance catalogue is part
+        # of Validate now, because it answers a validation question and nobody
+        # should have to know to press it separately; testing the API session is
+        # the first thing that check does anyway, and every import proves the
+        # session before it allocates an id. Recording the classification wizard
+        # is a maintenance task, not part of an import, so it lives in the CAMDS
+        # menu. All three still dispatch through the same worker actions.
         root.addLayout(bar)
         controls = QHBoxLayout()
         self.pause_button = QPushButton("Pause import")
@@ -137,9 +133,6 @@ class CamdsTab(QWidget):
         self.create_button.clicked.connect(self.create)
         self.save_button.clicked.connect(self.save)
         self.leave_button.clicked.connect(self.leave_editor)
-        self.api_button.clicked.connect(lambda: self._submit("api_check", None))
-        self.check_substances_button.clicked.connect(self.check_substances)
-        self.discover_button.clicked.connect(self.discover_classifications)
         self.import_tree_button.clicked.connect(self.review_import)
         self.sign_in_button.clicked.connect(self.request_sign_in)
         self.pause_button.clicked.connect(self.pause_import)
@@ -192,14 +185,24 @@ class CamdsTab(QWidget):
         if dialog.exec() and dialog.request:
             self._submit("import_tree", dialog.request, resume=dialog.resume.isChecked())
 
-    def check_substances(self) -> None:
+    def can_check_substances(self) -> str:
+        """Why the catalogue check cannot run now, or "" if it can."""
         if self.parsed_root is None:
-            self.status.setText("Parse an IMDS PDF before checking its substances.")
-            return
-        if self.worker is None:
-            self.status.setText("Open a CAMDS browser session before checking substances.")
-            return
+            return "no parsed IMDS document"
+        if self.worker is None or self.session != "AUTHENTICATED":
+            return "no signed-in CAMDS session"
+        if self.busy or self.editor_open:
+            return "CAMDS is busy"
+        return ""
+
+    def check_substances(self) -> bool:
+        """Look up every distinct substance of the parsed tree. Read-only."""
+        reason = self.can_check_substances()
+        if reason:
+            self.status.setText(f"Substance check skipped: {reason}.")
+            return False
         self._submit("check_substances", ImportRequest(self.parsed_root))
+        return True
 
     def load_node(self) -> None:
         node = self.source_node.currentData()
@@ -430,10 +433,6 @@ class CamdsTab(QWidget):
         self.leave_button.setEnabled(idle and self.editor_open)
         self.import_tree_button.setEnabled(idle and not self.editor_open and self.parsed_root is not None)
         self.sign_in_button.setEnabled(idle and not self.editor_open)
-        self.discover_button.setEnabled(idle and not self.editor_open)
-        self.api_button.setEnabled(idle and not self.editor_open)
-        self.check_substances_button.setEnabled(
-            idle and not self.editor_open and self.parsed_root is not None)
         control = getattr(self.worker, "control", None)
         running = self.importing and control is not None and not stopping
         self.pause_button.setEnabled(running and not control.paused and not control.stopping)

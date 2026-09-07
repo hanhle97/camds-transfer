@@ -33,7 +33,6 @@ PROGRESS_TEXT = {
     "save": "Saving…",
     "leave_editor": "Leaving the editor…",
     "discover_classifications": "Recording the classification wizard…",
-    "api_check": "Checking the CAMDS API session…",
     "check_substances": "Checking every substance in the catalogue…",
     "import_tree": "Importing parsed tree…",
     "login": "Signing in…",
@@ -55,7 +54,6 @@ ACTION_POLICY = {
     "save": CamdsAction.SAVE_DRAFT,
     "leave_editor": CamdsAction.OPEN,
     "discover_classifications": CamdsAction.READ,
-    "api_check": CamdsAction.READ,
     "check_substances": CamdsAction.SEARCH,
     "import_tree": CamdsAction.SAVE_DRAFT,
 }
@@ -112,21 +110,6 @@ class OperationsWorker(QThread):
         await page.goto(SEARCH_URL, wait_until="commit", timeout=NAVIGATION_TIMEOUT_MS)
         await page.wait_for_function(APP_SHELL, timeout=NAVIGATION_TIMEOUT_MS)
 
-    async def _api_check(self, context):
-        """Read-only proof that the JSON API works on this session.
-
-        Nothing is created, so this can be run before committing to an import.
-        """
-        api = CamdsApi(context.request)
-        # Two independent read-only calls: a search the import depends on, and
-        # the classification list. Either failing names the exact URL.
-        found = await api.find_material(name="__camds_api_session_probe__")
-        classifications = await api.material_classifications()
-        return {"kind": "api_check", "identity": "", "editor_open": False,
-                "note": (f"CAMDS API reachable on this session: search answered "
-                         f"({len(found)} row(s)) and {len(classifications)} material "
-                         "classification(s) were read. Nothing was created.")}
-
     async def _check_substances(self, context, request):
         """Look up every distinct substance this import needs. Read-only.
 
@@ -136,6 +119,8 @@ class OperationsWorker(QThread):
         run here first, so the whole list is known in minutes with nothing
         created.
         """
+        # The first search is also the session test the old "Test API session"
+        # button performed: an expired session answers the login page, not JSON.
         backend = ApiBackend(CamdsApi(context.request))
         request = request.snapshot()
         nodes = request.substance_lookups()
@@ -292,8 +277,6 @@ class OperationsWorker(QThread):
                                     importer = TreeImporter(backend, progress=self.node_progress.emit,
                                                             control=self.control)
                                     task = asyncio.create_task(importer.run(request, resume=options.get("resume", False)))
-                                elif action == "api_check":
-                                    task = asyncio.create_task(self._api_check(context))
                                 elif action == "check_substances":
                                     task = asyncio.create_task(self._check_substances(context, request))
                                 elif action == "discover_classifications":

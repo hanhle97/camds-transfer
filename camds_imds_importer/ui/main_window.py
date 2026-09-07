@@ -24,6 +24,7 @@ from ..workers.discovery_worker import DiscoveryWorker
 from ..workers.parser_worker import ParserWorker
 from ..workers.validation_worker import ValidationWorker
 from .logs_tab import LogsTab
+from .status_light import Lamp, StatusLight
 from .mapping_tab import MappingTab
 from .overview_tab import OverviewTab
 from .progress_tab import ProgressTab
@@ -45,6 +46,21 @@ class WorkerThread(QThread):
 
     def run(self) -> None:
         self.worker.run()
+
+
+# What each resting state means at a glance. Anything not named here is work in
+# progress, which is what BUSY says.
+LAMP_FOR_STATE = {
+    AppState.NO_DOCUMENT: Lamp.IDLE,
+    AppState.DOCUMENT_LOADED: Lamp.IDLE,
+    AppState.PARSED: Lamp.OK,
+    AppState.READY: Lamp.OK,
+    AppState.COMPLETED: Lamp.OK,
+    AppState.CAMDS_AUTHENTICATED: Lamp.OK,
+    AppState.CAMDS_LOGIN_REQUIRED: Lamp.WARN,
+    AppState.PAUSED: Lamp.WARN,
+    AppState.FAILED: Lamp.ERROR,
+}
 
 
 class MainWindow(QMainWindow):
@@ -77,8 +93,8 @@ class MainWindow(QMainWindow):
         self.import_button = QPushButton("1. Import IMDS PDF")
         self.file_label = QLabel("No PDF selected")
         self.metadata_label = QLabel("IMDS ID: -    Part No: -    Weight: -")
-        self.status_label = QLabel("● Status: Ready")
-        self.connection_label = QLabel("● CAMDS: Not connected")
+        self.status_label = StatusLight("Status: Ready", Lamp.IDLE)
+        self.connection_label = StatusLight("CAMDS: Not connected", Lamp.IDLE)
         self.overall = QProgressBar()
         self.stage_label = QLabel("Current stage: Idle")
         self.node_label = QLabel("Current node: -")
@@ -173,7 +189,7 @@ class MainWindow(QMainWindow):
         if event.total:
             self._set_overall(int(round(100 * event.completed / event.total)))
         if event.event == "paused":
-            self.status_label.setText("● Status: Paused between steps")
+            self.status_label.set("Status: Paused between steps", Lamp.WARN)
             if self.state_machine.state == AppState.IMPORTING:
                 self.state_machine.transition(AppState.PAUSED)
         elif event.event in ("node_failed", "stopped"):
@@ -187,7 +203,7 @@ class MainWindow(QMainWindow):
         """Connection, status, stage and progress always describe the same browser."""
         if status == "AUTHENTICATED":
             self.authenticated = True
-            self.connection_label.setText("✓ CAMDS: Logged in (operations session)")
+            self.connection_label.set("CAMDS: Logged in (operations session)", Lamp.OK)
             self.overview_tab.set_connection("Authenticated", self.credentials.get_username() or "-")
             self._set_stage("CAMDS_AUTHENTICATED")
             self.progress.stage = ImportStage.CAMDS_AUTHENTICATED
@@ -197,14 +213,16 @@ class MainWindow(QMainWindow):
             self.logs_tab.append("CAMDS", "Operations browser is authenticated")
         elif status in ("EXPIRED", "LOGIN_REQUIRED"):
             self.authenticated = False
-            self.connection_label.setText("⚠ CAMDS: Session expired" if status == "EXPIRED" else "⚠ CAMDS: Not connected")
+            self.connection_label.set(
+                "CAMDS: Session expired" if status == "EXPIRED" else "CAMDS: Not connected",
+                Lamp.WARN)
             self.overview_tab.set_connection("Not connected", "-")
             self._set_stage("CAMDS_LOGIN_REQUIRED")
             if AppState.CAMDS_LOGIN_REQUIRED in self._allowed_states():
                 self.state_machine.transition(AppState.CAMDS_LOGIN_REQUIRED)
         else:
             self.authenticated = False
-            self.connection_label.setText("● CAMDS: Not connected")
+            self.connection_label.set("CAMDS: Not connected", Lamp.IDLE)
 
     def _camds_session_ready(self) -> None:
         credentials, self._pending_login = self._pending_login, None
@@ -216,7 +234,7 @@ class MainWindow(QMainWindow):
         self.node_label.setText(message)
         if complete:
             self.overall.setValue(100)
-            self.status_label.setText("● Status: Ready")
+            self.status_label.set("Status: Ready", Lamp.OK)
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("File")
@@ -239,6 +257,15 @@ class MainWindow(QMainWindow):
         discover_action = QAction("Discover Authenticated Page", self)
         discover_action.triggered.connect(self.start_discovery)
         camds_menu.addAction(discover_action)
+        # Maintenance rather than part of an import: it records the creation
+        # wizard so classifications beyond 1.1.1 are supported.
+        wizard_action = QAction("Record classification wizard", self)
+        wizard_action.triggered.connect(self.camds_tab.discover_classifications)
+        camds_menu.addAction(wizard_action)
+        camds_menu.addSeparator()
+        check_action = QAction("Check substances against the catalogue", self)
+        check_action.triggered.connect(self.check_substances)
+        camds_menu.addAction(check_action)
         self.menuBar().addMenu("Help")
 
     def select_pdf(self) -> None:
@@ -321,6 +348,27 @@ class MainWindow(QMainWindow):
         else:
             self.state_machine.transition(AppState.READY)
         self.logs_tab.append("INFO", f"Validation complete: {self.progress.errors} errors, {self.progress.warnings} warnings")
+        self.check_substances(after_validation=True)
+
+    def check_substances(self, after_validation: bool = False) -> None:
+        """Ask CAMDS whether it holds every substance the tree names.
+
+        Offline validation cannot answer this, and an unresolved substance stops
+        an import hours in. It is read-only and takes about a minute, so it runs
+        as the last step of Validate whenever a session is available - and never
+        silently: when it cannot run, the log says why.
+        """
+        reason = self.camds_tab.can_check_substances()
+        if not reason:
+            self.logs_tab.append("CAMDS", "Checking every substance against the CAMDS catalogue…")
+            self.camds_tab.check_substances()
+            return
+        if after_validation:
+            self.logs_tab.append(
+                "INFO", "Substances were not checked against CAMDS (" + reason + "). "
+                "Sign in and use CAMDS -> Check substances before a long import.")
+        else:
+            self.logs_tab.append("INFO", "Cannot check substances: " + reason + ".")
 
     def open_settings(self) -> None:
         dialog = SettingsDialog(self.credentials, self)
@@ -396,14 +444,14 @@ class MainWindow(QMainWindow):
             return
         self._set_stage(stage)
         if stage == "CAMDS_WAITING_VERIFICATION":
-              self.connection_label.setText("◉ CAMDS: Waiting verification")
+              self.connection_label.set("CAMDS: Waiting verification", Lamp.BUSY)
               self.logs_tab.append("WAIT", "Complete slider/CAPTCHA in the CAMDS browser window")
 
     def _login_completed(self, result: object, username: str) -> None:
         if result.status == LoginStatus.AUTHENTICATED:
             self._set_stage("CAMDS_AUTHENTICATED")
             self.authenticated = True
-            self.connection_label.setText("✓ CAMDS: Logged in")
+            self.connection_label.set("CAMDS: Logged in", Lamp.OK)
             self.overview_tab.set_connection("Authenticated", username)
             current = self.state_machine.state
             if current in {AppState.NO_DOCUMENT, AppState.DOCUMENT_LOADED, AppState.PARSED}:
@@ -413,7 +461,7 @@ class MainWindow(QMainWindow):
             self.logs_tab.append("CAMDS", f"CAMDS login successful; authenticated URL: {result.url}")
         else:
             self._set_stage("CAMDS_LOGIN_REQUIRED")
-            self.connection_label.setText("⚠ CAMDS: Not connected")
+            self.connection_label.set("CAMDS: Not connected", Lamp.WARN)
             self.logs_tab.append("ERROR", result.message)
 
     def _run_worker(self, worker: QObject) -> QThread:
@@ -471,7 +519,7 @@ class MainWindow(QMainWindow):
 
     def _worker_error(self, message: str) -> None:
         self.logs_tab.append("ERROR", message)
-        self.status_label.setText("✕ Status: Failed")
+        self.status_label.set("Status: Failed", Lamp.ERROR)
         if AppState.FAILED in self._allowed_states():
             self.state_machine.transition(AppState.FAILED)
         # The dialog shows the reason; the Logs tab keeps the whole text.
@@ -495,9 +543,10 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(importing and control is not None and not control.stopping)
         # A paused import must stay visible; a later state change must not erase it.
         if importing and control is not None and control.paused:
-            self.status_label.setText("● Status: Paused between steps")
+            self.status_label.set("Status: Paused between steps", Lamp.WARN)
         else:
-            self.status_label.setText(f"● Status: {state.value.replace('_', ' ').title()}")
+            self.status_label.set(f"Status: {state.value.replace('_', ' ').title()}",
+                                  LAMP_FOR_STATE.get(state, Lamp.BUSY))
 
     def closeEvent(self, event) -> None:
         # Cancel Playwright on its own event loop before its QThread is destroyed.

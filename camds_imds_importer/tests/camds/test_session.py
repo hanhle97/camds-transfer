@@ -58,7 +58,7 @@ def test_every_action_has_the_words_shown_while_it_runs():
 
 def test_every_dispatchable_action_is_classified_and_sensitive_ones_fail_closed():
     assert set(ACTION_POLICY) == {"login", "search", "create", "save", "leave_editor",
-                                  "discover_classifications", "api_check", "import_tree",
+                                  "discover_classifications", "import_tree",
                                   "check_substances"}
     for action in ACTION_POLICY.values():
         require_action_confirmation(action)  # automatable actions need no confirmation

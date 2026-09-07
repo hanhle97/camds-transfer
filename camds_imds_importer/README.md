@@ -44,8 +44,25 @@ caller; with them, reads succeed on a signed-in session.
 
 Before an import starts, the backend proves the session with one read-only call.
 That happens before the journal exists and before CAMDS allocates any id, so a
-lapsed session costs nothing: the run stops with no draft to reconcile. **Test
-API session** in the CAMDS tab runs the same check on demand.
+lapsed session costs nothing: the run stops with no draft to reconcile. The
+substance check below opens with the same call, and the status light polls the
+live page, so there is no separate button for it.
+
+### Checking the substance catalogue
+
+**Validate** ends by asking CAMDS whether it holds every substance the tree
+names, whenever a session is available; `CAMDS → Check substances against the
+catalogue` runs it on its own. It is read-only and creates nothing.
+
+Offline validation cannot answer this question, and an unresolved substance
+stops an import - a Material missing part of itself is wrong data, not
+incomplete data. The real report's 5764 Substance nodes are only 204 distinct
+lookups, so the answer takes about a minute instead of the hours an import
+would spend reaching them. When it cannot run, the log says why rather than
+staying quiet.
+
+It runs the same `resolve_substance` the import runs, not a second copy of the
+rule, so passing it means something.
 
 Endpoints, fields and their evidence are in
 [CREATE_COMPONENT_API.md](camds/CREATE_COMPONENT_API.md). Mass, quantity and

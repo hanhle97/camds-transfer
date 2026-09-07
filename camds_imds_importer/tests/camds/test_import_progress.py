@@ -34,6 +34,9 @@ class FakeDraftBrowser:
     async def saved_children(self, path, at=(0, 1)):
         return []
 
+    async def find_existing_component(self, node, resolved):
+        return None
+
     async def find_existing_material(self, node):
         return None
 

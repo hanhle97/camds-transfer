@@ -376,6 +376,13 @@ class DraftBrowser:
     async def release_material(self, ref):
         raise RuntimeError("Releasing a Material needs the JSON API backend")
 
+    async def find_existing_component(self, node, resolved):
+        """Searching before building needs the JSON API backend."""
+        return None
+
+    async def add_component_reference(self, parent_path, child, ref, at=(0, 1)):
+        raise RuntimeError("Attaching an existing Component needs the JSON API backend")
+
     async def read_back_findings(self) -> list[str]:
         """Differences accepted during read-back. This backend compares only
         what it can read from the form, and every such check either matches or
@@ -698,16 +705,45 @@ class TreeImporter:
             if root["node_type"] == "MATERIAL":
                 root_ref = refs[root["uid"]]
             else:
+                # Which Components CAMDS already holds. Depth first: a parent
+                # is compared on what its children resolved to, so the children
+                # must be settled before it can be asked about.
+                matched: dict[str, tuple] = {}
+                if reuse:
+                    resolved = {uid: ref[0] for uid, ref in refs.items()}
+
+                    async def match(node):
+                        for child in node.get("children") or []:
+                            if child["node_type"] == "COMPONENT":
+                                await match(child)
+                        if node is root or node["node_type"] != "COMPONENT":
+                            return
+                        found = await self.io.find_existing_component(node, resolved)
+                        if found:
+                            matched[node["uid"]] = tuple(found)
+                            resolved[node["uid"]] = found[0]
+                            record("existing_component_matched", uid=node["uid"],
+                                   name=node["name"], ref=list(found))
+                            self.reused.append(
+                                f"{node['name']}: reused {'/'.join(found)} already in CAMDS, "
+                                "same part number and the same children")
+
+                    await match(root)
+
                 # Repeated names are addressed by document order instead of being
                 # refused: CAMDS shows children in the order they were added, and
                 # the final read-back checks every value in that same order.
                 def label(node):
-                    return names[node["uid"]] if node["node_type"] == "MATERIAL" else node["name"]
+                    if node["node_type"] == "MATERIAL" or node["uid"] in matched:
+                        return names.get(node["uid"], node["name"])
+                    return node["name"]
                 seen, place = {}, {}
                 def enumerate_paths(node, prefix):
                     path = prefix + (label(node),)
                     place[node["uid"]] = (path, seen.get(path, 0))
                     seen[path] = seen.get(path, 0) + 1
+                    if node["uid"] in matched:
+                        return  # attached whole; its children are its own MDS's
                     for child in node.get("children", []):
                         enumerate_paths(child, path)
                 enumerate_paths(root, ())
@@ -747,6 +783,14 @@ class TreeImporter:
                                 reporter.done()
                                 reporter("skipped_completed")
                                 await build(child, path + [child["name"]])
+                                continue
+                            if child["uid"] in matched and reuse is None:
+                                record("attach_component_requested", uid=child["uid"],
+                                       ref=list(matched[child["uid"]]), name=child["name"])
+                                names[child["uid"]] = await self.io.add_component_reference(
+                                    path, child, matched[child["uid"]], at=at(node["uid"]))
+                                await save(child["uid"])
+                                reporter.done()
                                 continue
                             record("add_semicomponent_requested" if semi else "add_child_requested",
                                    uid=child["uid"], name=child["name"], refilled=reuse is not None)
@@ -800,7 +844,15 @@ class TreeImporter:
                         if len(path) > 1:
                             await self.io.verify_value("Quantity", float(node["quantity"]))
                     for child in node["children"]:
-                        if child["node_type"] in ("COMPONENT", "SEMICOMPONENT"):
+                        if child["uid"] in matched:
+                            # Attached, not built: what is checked is that the
+                            # tree points at the Component that was matched. Its
+                            # contents are its own MDS's business.
+                            await self.io.select(path + [names[child["uid"]]], at=at(child["uid"]))
+                            if await self.io.identity() != tuple(matched[child["uid"]]):
+                                raise RuntimeError(
+                                    f"{child['name']}: saved Component reference mismatch")
+                        elif child["node_type"] in ("COMPONENT", "SEMICOMPONENT"):
                             await verify(child, path + [child["name"]], node["node_type"])
                         else:
                             await self.io.select(path + [names[child["uid"]]], at=at(child["uid"]))

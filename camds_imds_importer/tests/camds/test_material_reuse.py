@@ -113,6 +113,9 @@ async def test_reuse_is_reported_and_journalled(tmp_path):
         async def read_back_findings(self): return []
         async def can_reenter_saved(self): return False
         async def saved_children(self, path, at=(0, 1)): return []
+        async def find_existing_component(self, node, resolved):
+            return None
+
         async def find_existing_material(self, node): return ("CA_8_9", "6")
         async def open_saved(self, kind, ref): self.ref = ref
         async def value(self, label): return "Cu99"
@@ -160,6 +163,9 @@ async def test_recreating_everything_never_searches(tmp_path):
         async def read_back_findings(self): return []
         async def can_reenter_saved(self): return False
         async def saved_children(self, path, at=(0, 1)): return []
+        async def find_existing_component(self, node, resolved):
+            return None
+
         async def find_existing_material(self, node):
             searched.append(node)
             return ("CA_8_9", "6")

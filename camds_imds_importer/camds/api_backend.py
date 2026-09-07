@@ -212,6 +212,72 @@ class ApiBackend:
                 return mds_id, str(version)
         return None
 
+    async def find_existing_component(self, node, resolved) -> tuple[str, str] | None:
+        """The Component already in CAMDS that this node is, if any.
+
+        Three things have to agree, by instruction: the Part No., the number of
+        children, and every child pointing at the MDS this run resolved for it.
+        Anything else and a new Component is created.
+
+        `resolved` maps each child's uid to the MDS id it ended up as, so this
+        can only be asked once the children are known - the subtree is matched
+        from the bottom up.
+
+        A structure is not a name, so no name check: the same part may be
+        called something slightly different in CAMDS and still be the same
+        assembly of the same references. What must not differ is what it is
+        made of.
+        """
+        number = str(node.get("part_number") or "").strip()
+        if not number:
+            return None  # nothing that identifies it
+        wanted = []
+        for child in node.get("children") or []:
+            mds = resolved.get(child.get("uid"))
+            if not mds:
+                return None  # a child this run has not resolved cannot be compared
+            wanted.append(str(mds))
+
+        rows = await self.api.find_component(symbol=number)
+        released = []
+        for row in rows:
+            if str(row.get("symbol") or "").strip() != number:
+                continue
+            version = str(row.get("version") or "").strip()
+            if version.isdigit() and row.get("mdsId"):
+                released.append((int(version), str(row["mdsId"])))
+        for version, mds_id in sorted(released, reverse=True):
+            tree = await self.api.load_tree(mds_id)
+            children = tree.get("children") or []
+            if len(children) != len(wanted):
+                continue
+            if all(str(c.get("mdsId")) == expect for c, expect in zip(children, wanted)):
+                return mds_id, str(version)
+        return None
+
+    async def add_component_reference(self, parent_path, child, ref, at=(0, 1)) -> str:
+        """Attach a Component that already exists, rather than building it again.
+
+        The same call that attaches a Material: `substituteMdsNode` takes an
+        `mdsId` and does not ask what kind it is, and a saved tree does come
+        back holding referenced Components (`ref1_-CA_21_594394588`, nodeType 1).
+        That the call was only ever recorded attaching a Material is the part
+        of this that is inference rather than evidence.
+        """
+        parent = self._resolve(parent_path, at)
+        attached = await self.api.attach_mds(
+            root_struts_id=self.root.struts_id, root_mds=self.root.mds_id, mds_id=ref[0],
+            parent_struts_id=parent, index=self._next_index(parent))
+        self._adopt(parent, attached.struts_id)
+        await self._load(attached.struts_id)
+        display = (self.view["data"] or {}).get(NAME) or attached.text
+        self._remember(tuple(parent_path) + (display,), attached.struts_id)
+        await self.api.set_relation(attached.struts_id,
+                                    {REL_QUANTITY: number(child["quantity"])},
+                                    **self._within(parent))
+        await self._load(attached.struts_id)
+        return display
+
     async def create_root(self, node, on_allocated=None, existing=None) -> tuple[str, str]:
         """Allocate the MDS, then fill it.
 

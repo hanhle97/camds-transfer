@@ -126,6 +126,9 @@ async def test_an_unplaceable_application_is_reported_even_if_the_run_fails(tmp_
         async def saved_children(self, path, at=(0, 1)):
             return []
 
+        async def find_existing_material(self, node):
+            return None
+
         async def read_back_findings(self):
             return []
 
@@ -169,6 +172,9 @@ class ApplicationBrowser:
 
     async def saved_children(self, path, at=(0, 1)):
         return []
+
+    async def find_existing_material(self, node):
+        return None
 
     async def read_back_findings(self):
         return []

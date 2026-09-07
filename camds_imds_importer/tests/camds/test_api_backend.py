@@ -316,7 +316,7 @@ async def test_the_api_backend_answers_every_call_the_importer_makes():
     from camds_imds_importer.camds import tree_import
     source = inspect.getsource(tree_import)
     called = sorted(set(re.findall(r"self\.io\.(\w+)", source)))
-    assert len(called) == 21
+    assert len(called) == 22
     for name in called:
         assert callable(getattr(ApiBackend, name, None)), f"ApiBackend cannot {name}"
 

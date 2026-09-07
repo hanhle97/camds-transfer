@@ -177,6 +177,40 @@ class ApiBackend:
                 f"({exc}). Sign in again in the browser window, then retry; "
                 "nothing was allocated.") from exc
 
+    async def find_existing_material(self, node) -> tuple[str, str] | None:
+        """The Material already in CAMDS that this node describes, if any.
+
+        Creating one per run is what filled the account with duplicates. Reusing
+        needs certainty about identity, and the search rows do not carry a name:
+        they carry `mdsId`, `symbol` and `version`. So the Material No. is the
+        key, and the name is confirmed afterwards by reading the saved tree.
+
+        Only whole-numbered versions count. A version like 0.01 is a draft that
+        somebody, possibly this tool, left half-built; 1, 2, 6 are the released
+        ones. Reusing a draft would attach an unfinished composition.
+
+        Returns None whenever identity is not certain, and the caller creates a
+        new Material. A duplicate is a nuisance; the wrong composition attached
+        to a part is wrong data.
+        """
+        number = str(node.get("material_number") or "").strip()
+        if not number:
+            return None  # nothing that identifies it; a name search cannot confirm
+        rows = await self.api.find_material(symbol=number)
+        released = []
+        for row in rows:
+            if str(row.get("symbol") or "").strip() != number:
+                continue
+            version = str(row.get("version") or "").strip()
+            if version.isdigit() and row.get("mdsId"):
+                released.append((int(version), str(row["mdsId"])))
+        wanted = str(node.get("name") or "").strip().casefold()
+        for version, mds_id in sorted(released, reverse=True):
+            tree = await self.api.load_tree(mds_id)
+            if str(tree.get("text") or "").strip().casefold() == wanted:
+                return mds_id, str(version)
+        return None
+
     async def create_root(self, node, on_allocated=None, existing=None) -> tuple[str, str]:
         """Allocate the MDS, then fill it.
 

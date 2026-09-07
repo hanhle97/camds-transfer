@@ -192,7 +192,8 @@ class CamdsTab(QWidget):
             return
         dialog = ImportDialog(self.parsed_root, self)
         if dialog.exec() and dialog.request:
-            self._submit("import_tree", dialog.request, resume=dialog.resume.isChecked())
+            self._submit("import_tree", dialog.request, resume=dialog.resume.isChecked(),
+                         reuse=dialog.reuse.isChecked())
 
     def can_check_substances(self) -> str:
         """Why the catalogue check cannot run now, or "" if it can."""

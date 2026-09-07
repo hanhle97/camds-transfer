@@ -369,6 +369,10 @@ class DraftBrowser:
     async def saved_children(self, path, at=(0, 1)):
         raise RuntimeError("Reading a saved node's children needs the JSON API backend")
 
+    async def find_existing_material(self, node):
+        """Searching the catalogue before creating needs the JSON API backend."""
+        return None
+
     async def read_back_findings(self) -> list[str]:
         """Differences accepted during read-back. This backend compares only
         what it can read from the form, and every such check either matches or
@@ -463,6 +467,8 @@ class TreeImporter:
         # Applications are always matched by wording; anything unclear is skipped.
         self.resolve_by_name = True
         self.skipped: list[str] = []
+        # Materials found in CAMDS and used instead of creating another.
+        self.reused: list[str] = []
 
     def _open_journal(self, request, resume, can_reenter=False):
         """Return (journal, ResumeState). Refuses any re-entry that cannot be made safe.
@@ -541,9 +547,12 @@ class TreeImporter:
                    camds_value=str(resolution.value), camds_label=chosen["label"],
                    source=resolution.source)
 
-    async def run(self, request: ImportRequest, resume: bool = False):
+    async def run(self, request: ImportRequest, resume: bool = False, reuse: bool = True):
+        """Import the tree. `reuse` searches CAMDS for a Material before making
+        another one; turning it off recreates everything from the report."""
         request = request.snapshot()
         self.skipped = []
+        self.reused = []
         warnings = request.validate(self.mapping)
         plan = request.plan()
         # Login/readiness failures should not create a duplicate-prevention journal.
@@ -602,6 +611,21 @@ class TreeImporter:
                     record("existing_material_verified", uid=mat["uid"], ref=refs[mat["uid"]],
                            display_name=names[mat["uid"]])
                     continue
+                if reuse and mat["uid"] not in state.incomplete_materials:
+                    # Search before creating. Making one per run is what filled
+                    # the account with duplicates of the same Material.
+                    found = await self.io.find_existing_material(mat)
+                    if found:
+                        refs[mat["uid"]] = tuple(found)
+                        await self.io.open_saved("Material", refs[mat["uid"]])
+                        names[mat["uid"]] = await self.io.value("Material Name")
+                        reporter.done()
+                        record("existing_material_reused", uid=mat["uid"], ref=list(found),
+                               display_name=names[mat["uid"]], name=mat["name"])
+                        self.reused.append(
+                            f"{mat['name']}: reused {'/'.join(found)} already in CAMDS "
+                            f"rather than creating another")
+                        continue
                 held = None
                 if mat["uid"] in state.incomplete_materials:
                     # Created by an earlier run but never verified. Reopen it and
@@ -776,7 +800,7 @@ class TreeImporter:
             return {"kind": "import_tree", "identity": "/".join(root_ref), "editor_open": False,
                     "nodes": reporter.completed, "total": reporter.total,
                     "warnings": warnings + found + request.derived, "merges": request.merges,
-                    "skipped": list(self.skipped),
+                    "skipped": list(self.skipped) + list(self.reused),
                     "note": "Draft tree saved and verified through Search / View. No Send/Submit. Journal: " + str(journal.path)}
         except BaseException as exc:
             stopped = isinstance(exc, ImportStopped)

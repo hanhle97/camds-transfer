@@ -391,7 +391,9 @@ class OperationsWorker(QThread):
                                         if self.use_api else DraftBrowser(operations))
                                     importer = TreeImporter(backend, progress=self.node_progress.emit,
                                                             control=self.control)
-                                    task = asyncio.create_task(importer.run(request, resume=options.get("resume", False)))
+                                    task = asyncio.create_task(importer.run(
+                                        request, resume=options.get("resume", False),
+                                        reuse=options.get("reuse", True)))
                                 elif action == "check_substances":
                                     task = asyncio.create_task(self._check_substances(api, request))
                                 elif action == "discover_classifications":

@@ -59,6 +59,14 @@ class ImportDialog(QDialog):
         self.preview = QPlainTextEdit()
         self.preview.setReadOnly(True)
         layout.addWidget(self.preview)
+        self.reuse = QCheckBox(
+            "Reuse Materials already in CAMDS instead of creating another "
+            "(matched on Material No. and confirmed by name; only whole-numbered versions)")
+        self.reuse.setChecked(True)
+        self.reuse.setToolTip(
+            "Creating a Material per run is what fills an account with duplicates of the "
+            "same thing. Unchecked, every Material in the report is created afresh.")
+        layout.addWidget(self.reuse)
         self.resume = QCheckBox(
             "Resume an interrupted run of this exact tree and mapping "
             "(skips Materials already verified; refuses if a draft editor was left half-built)")

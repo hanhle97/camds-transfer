@@ -63,8 +63,28 @@ def check_command() -> int:
     print(f"Browser looked up: {browsers_root()}")
     found = chromium_present()
     print(f"Chromium         : {'found' if found else 'not installed yet'}")
-    if not found:
-        print("\nThe first CAMDS window will download it (about 430 MB), once.")
+
+    # What Python resolved and what the driver resolves are two different
+    # answers, and only the second one decides whether a window opens.
+    from playwright._impl._driver import get_driver_env
+    print(f"Driver env       : {get_driver_env().get('PLAYWRIGHT_BROWSERS_PATH', '<unset>')}")
+
+    import asyncio
+
+    from playwright.async_api import async_playwright
+
+    async def probe() -> str:
+        async with async_playwright() as runtime:
+            browser = await runtime.chromium.launch(headless=True)
+            version = browser.version
+            await browser.close()
+            return version
+
+    try:
+        print(f"Launch           : ok, Chromium {asyncio.run(probe())}")
+    except Exception as exc:
+        print(f"Launch           : FAILED - {str(exc).splitlines()[0][:200]}")
+        return 1
     return 0
 
 

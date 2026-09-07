@@ -339,12 +339,18 @@ Without a bundled browser, the first CAMDS window downloads Chromium through
 Playwright's own driver, which ships with the build - no Python and no
 `playwright` command are needed on the machine.
 
-`CAMDS-IMDS-Importer.exe check` prints what the build resolved: where it keeps
-its files, where it looks for the browser and whether it found one. The first
-build failed with a path inside its own extraction directory because a stray
-`PLAYWRIGHT_BROWSERS_PATH=0` in the environment means "look inside the
-package", where nothing had been bundled. A runtime hook now settles that
-variable either way, and `check` shows the answer.
+Playwright assumes a frozen application bundles its browsers: `_transport.py`
+does `env.setdefault("PLAYWRIGHT_BROWSERS_PATH", "0")` whenever `sys.frozen` is
+set, and `"0"` means "inside the playwright package". A build without a bundled
+browser therefore hunts inside its own `%TEMP%\_MEIxxxxxx` extraction
+directory. Clearing the variable does not help - `setdefault` fills it back in -
+so a runtime hook *sets* it: to the bundle when a browser is really there, and
+otherwise to the same per-user cache `playwright install` writes to.
+
+`CAMDS-IMDS-Importer.exe check` prints what the build resolved - where it keeps
+its files, where it looks for the browser, what the driver is told, and whether
+a browser actually launches. The launch is the part that matters: everything
+else can look right while the window still refuses to open.
 
 ### What travels with the repository, and what does not
 

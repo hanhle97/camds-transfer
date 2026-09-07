@@ -64,13 +64,46 @@ def test_an_empty_directory_is_not_a_browser(monkeypatch, tmp_path):
     assert browser_runtime.chromium_present()
 
 
-def test_the_runtime_hook_clears_the_variable_when_nothing_is_bundled():
-    """A machine with a stray PLAYWRIGHT_BROWSERS_PATH=0 sent the first build
-    looking for chrome.exe inside its own extraction directory."""
+def test_playwright_still_forces_the_bundled_path_on_a_frozen_build():
+    """The reason the hook exists. Playwright assumes a frozen application
+    carries its browsers and defaults the variable to "0" - inside the package -
+    on every launch. If this ever stops being true the hook can go; while it is
+    true, clearing the variable is useless because setdefault fills it back in.
+    """
+    import inspect
+
+    from playwright._impl import _transport
+
+    source = inspect.getsource(_transport)
+    assert 'setdefault("PLAYWRIGHT_BROWSERS_PATH", "0")' in source
+    assert 'getattr(sys, "frozen", False)' in source
+
+
+def test_the_runtime_hook_sets_the_variable_rather_than_clearing_it():
+    """Clearing it leaves Playwright's setdefault free to choose "0"."""
     hook = (Path(__file__).parents[2] / "packaging" / "playwright_browsers_hook.py")
     source = hook.read_text(encoding="utf-8")
-    assert 'os.environ.pop("PLAYWRIGHT_BROWSERS_PATH", None)' in source
-    assert "chrome.exe" in source, "presence must be judged on the executable, not the folder"
+    assert "os.environ.pop" not in source, "clearing is exactly what does not work"
+    assert "_user_cache()" in source, "an unbundled build must name the per-user cache"
+    assert 'os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"' in source
+
+
+def test_the_hook_agrees_with_playwrights_own_default_location(monkeypatch, tmp_path):
+    """The hook and the app must resolve the same directory, or one of them is
+    describing a place the browser is not."""
+    import importlib.util
+
+    from camds_imds_importer.camds import browser_runtime
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    monkeypatch.setattr(sys, "platform", "win32")
+    spec = importlib.util.spec_from_file_location(
+        "hook_probe", Path(__file__).parents[2] / "packaging" / "playwright_browsers_hook.py")
+    hook = importlib.util.module_from_spec(spec)
+    monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
+    spec.loader.exec_module(hook)
+    assert hook._user_cache() == tmp_path / "ms-playwright"
+    assert browser_runtime.browsers_root() == tmp_path / "ms-playwright"
 
 
 def test_the_build_always_ships_that_hook():
@@ -87,8 +120,12 @@ def test_the_build_can_report_what_it_resolved(capsys, monkeypatch, tmp_path):
     from camds_imds_importer.app import check_command
 
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "browsers"))
-    assert check_command() == 0
+    # Pointed at an empty directory, so the launch is expected to fail: what
+    # matters is that it says where it looked and what went wrong.
+    assert check_command() == 1
     printed = capsys.readouterr().out
-    for line in ("Files kept in", "BROWSERS_PATH", "Browser looked up", "Chromium"):
+    for line in ("Files kept in", "BROWSERS_PATH", "Browser looked up", "Chromium",
+                 "Driver env", "Launch"):
         assert line in printed, printed
     assert str(tmp_path / "browsers") in printed
+    assert "FAILED" in printed, "a launch that cannot work must not read as fine"

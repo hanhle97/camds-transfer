@@ -23,6 +23,7 @@ import asyncio
 import inspect
 import re
 import time
+from decimal import Decimal
 from dataclasses import dataclass
 from typing import Any
 
@@ -137,6 +138,23 @@ REQUEST_TIMEOUT_MS = 60_000
 
 def retryable(path: str) -> bool:
     return path in RETRYABLE or path.startswith(RETRYABLE_PREFIXES)
+
+
+def number(value) -> str:
+    """A number as the browser's own form sends it: plain decimal, no exponent.
+
+    `format(x, ".12g")` writes 0.000065 as "6.5e-05". CAMDS reads the leading
+    6.5 and discards the exponent, so a mass of 0.065 mg went in as 6.5 g - a
+    hundred thousand times too much, in a declared mass, silently.
+
+    Every recorded write sends a plain decimal: "50", "5", "44". `normalize`
+    drops trailing zeros the way those do, and formatting with "f" keeps 3000
+    from becoming 3E+3 on the way out.
+
+    Both backends use this one. There were two copies, and only the API one was
+    fixed - which is how the browser path kept the defect.
+    """
+    return format(Decimal(str(float(value))).normalize(), "f")
 
 
 def portion(mode: int, low: float | None = None, high: float | None = None) -> dict:

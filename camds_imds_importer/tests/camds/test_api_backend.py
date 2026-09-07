@@ -687,3 +687,12 @@ def test_no_number_is_ever_written_in_scientific_notation():
 
     for value in (1e-30, 6.5e-05, 1e20, 1.5e16, 0.1 + 0.2):
         assert "e" not in number(value).lower(), (value, number(value))
+
+
+def test_both_backends_format_numbers_the_same_way():
+    """There were two copies of this and only one was fixed, so the browser
+    path kept writing masses in scientific notation after the API path stopped."""
+    from camds_imds_importer.camds import api, api_backend, tree_import
+
+    assert api_backend.number is api.number
+    assert tree_import.number is api.number

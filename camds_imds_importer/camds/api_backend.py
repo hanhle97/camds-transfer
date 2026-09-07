@@ -19,14 +19,13 @@ Evidence for every endpoint and field is in `CREATE_COMPONENT_API.md`.
 """
 from __future__ import annotations
 
-from decimal import Decimal
-
 from .api import (CLASSIFICATION, FIXED, FROM_TO, MASS_PER_ITEM, MATERIAL_NODE, NAME,
                   RECYCLATE_NONE,
                   NODE_CAS, NODE_NAME,
                   NUMBER, REL_MASS, REL_MASS_UNIT, REL_MODE, REL_QUANTITY, REL_RATE, REST,
                   SEARCH_CAS, SEARCH_ID,
-                  SEARCH_NAME, WEIGHT_UNIT, CamdsApiError, TreeNode, addressable, portion)
+                  SEARCH_NAME, WEIGHT_UNIT, CamdsApiError, TreeNode, addressable, number,
+                  portion)
 from .import_plan import proportion, real_cas
 from .substance_mapping import SubstanceMapping
 from .material_classifications import classification_code
@@ -62,21 +61,6 @@ def _offered(rows, limit=6) -> str:
 def named(value) -> dict:
     """Only write a number when the report actually carries one."""
     return {NUMBER: value} if value else {}
-
-
-def number(value) -> str:
-    """A number as the browser's own form sends it: plain decimal, no exponent.
-
-    `format(x, ".12g")` writes 0.000065 as "6.5e-05". CAMDS reads the leading
-    6.5 and discards the exponent, so a mass of 0.065 mg was stored as 6.5 g -
-    a hundred thousand times too much, silently, in a declared mass. Read-back
-    caught it only because it compares what was sent with what came back.
-
-    Every recorded write sends a plain decimal: "50", "5", "44". `normalize`
-    drops trailing zeros the way those do, and formatting the result with "f"
-    keeps 3000 from becoming 3E+3 on the way out.
-    """
-    return format(Decimal(str(float(value))).normalize(), "f")
 
 
 class ApiBackend:

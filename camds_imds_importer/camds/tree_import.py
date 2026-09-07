@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 
 from playwright.async_api import expect
 
+from .api import number
 from .application_mapping import ApplicationMapping, Resolution, normalise
 from .import_control import ImportControl, ImportStopped, Reporter
 from .import_plan import ImportRequest, proportion, real_cas
@@ -19,10 +20,6 @@ from .operations import CREATE_URL, NAVIGATION_TIMEOUT_MS, SEARCH_URL, CreateReq
 # Inferred from the Basic Substance search, which this dialog reuses; the
 # recorded evidence covers only the CAS field, so a missing label fails loudly.
 SUBSTANCE_NAME_LABEL = "Name / Synonym / English Name:"
-
-
-def number(value):
-    return format(float(value), ".12g")
 
 
 @dataclass

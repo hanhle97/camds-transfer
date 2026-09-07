@@ -7,7 +7,39 @@
       "camds_value": "39",
       "camds_label": "Not applicable",
       "source": "exact-name-match",
-      "recorded_at": "2026-09-06T13:17:52.137250+00:00"
+      "recorded_at": "2026-09-07T00:13:53.786554+00:00"
+    },
+    "nickel|otherapplicationsurfacenotroutinelytouchedornickelreleaserate05gcm2week": {
+      "substance": "Nickel",
+      "imds_application": "Other application (Surface not routinely touched or nickel release rate < 0.5µg/cm2/week) [33]",
+      "camds_value": "38",
+      "camds_label": "Other application (Surface not routinely touched or nickel release rate <  0.5μg/cm2/week)",
+      "source": "exact-name-match",
+      "recorded_at": "2026-09-06T23:43:51.397469+00:00"
+    },
+    "lead|concentrationwithinacceptablegadsllimits": {
+      "substance": "Lead",
+      "imds_application": "Concentration within acceptable GADSL limits [44]",
+      "camds_value": "27",
+      "camds_label": "Concentration within acceptable GADSL limits",
+      "source": "exact-name-match",
+      "recorded_at": "2026-09-06T23:43:09.081018+00:00"
+    },
+    "nickel|notapplicable": {
+      "substance": "Nickel",
+      "imds_application": "Not applicable [34]",
+      "camds_value": "39",
+      "camds_label": "Not applicable",
+      "source": "exact-name-match",
+      "recorded_at": "2026-09-06T23:43:08.006089+00:00"
+    },
+    "cadmium|concentrationwithinacceptablegadsllimits": {
+      "substance": "Cadmium",
+      "imds_application": "Concentration within acceptable GADSL limits [47]",
+      "camds_value": "27",
+      "camds_label": "Concentration within acceptable GADSL limits",
+      "source": "exact-name-match",
+      "recorded_at": "2026-09-06T23:40:07.080339+00:00"
     }
   }
 }

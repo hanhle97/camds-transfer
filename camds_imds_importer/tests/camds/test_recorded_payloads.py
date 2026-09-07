@@ -276,6 +276,33 @@ def _case(label):
     return CASES[label]
 
 
+async def test_the_recyclate_request_matches_the_recorded_one_field_for_field():
+    """Three runs were spent on this call. The whole record was right; the
+    body around it was missing structId, which addresses the node the form had
+    loaded. Comparing the summary rather than the request is what hid it."""
+    from camds_imds_importer.camds.api import RECYCLATE_NONE, CamdsApi
+
+    recorded = _case("release: recyclate answered No")["request"]
+    sent = {}
+
+    class Capture:
+        async def post(self, url, params=None, data=None, headers=None, timeout=None):
+            sent.update(data)
+
+            class Response:
+                status = 200
+
+                @staticmethod
+                async def json():
+                    return {"respCode": "0", "ok": True, "data": None}
+            return Response
+
+    await CamdsApi(Capture()).set_material_recyclate(
+        recorded["mdsId"], recorded["structId"], dict(RECYCLATE_NONE))
+
+    assert {k: v for k, v in sent.items() if k != "_t"} ==            {k: v for k, v in recorded.items() if k != "_t"}
+
+
 def test_the_recyclate_answer_is_the_whole_record_the_browser_sent():
     """Sending only the five fields that carry a value was answered with the
     generic "程序异常", the same way a null cindex was. CAMDS wants the whole

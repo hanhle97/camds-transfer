@@ -51,6 +51,16 @@ opening; only the one before publishing decides, so only that one is made here.
 
 ## The recyclate answer
 
+The body has **four** fields, not three:
+
+```json
+{"mdsId": "CA_8_55110193", "structId": "CA_21_792090237",
+ "materialRecyclateVO": { ... }, "_t": ...}
+```
+
+`structId` is the strutsId the form had loaded. Without it the call is refused
+with the generic `程序异常`, whatever the record contains.
+
 `containRecyclate: 2` is No. **All 29 fields go, nulls included** - sending
 only the five that carry a value was answered with the generic `程序异常`, the
 same way a null `cindex` and a null `recycledmaterials` were. CAMDS wants the

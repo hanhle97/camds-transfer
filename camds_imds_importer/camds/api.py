@@ -580,10 +580,16 @@ class CamdsApi:
         return await self._post("/api/mds/mdsValidate/mdsValidate",
                                 payload={"mdsId": mds_id, "_t": _stamp()}) or {}
 
-    async def set_material_recyclate(self, mds_id: str, view: dict) -> Any:
+    async def set_material_recyclate(self, mds_id: str, struts_id: str, view: dict) -> Any:
+        """The recyclate answer, addressed to the MDS *and* to its node.
+
+        `structId` is the fourth field of the recorded body and the same
+        strutsId the form had loaded. Leaving it out is answered with the
+        generic "程序异常".
+        """
         return await self._post("/api/mds/material/editMaterialRecyclateVO",
-                                payload={"mdsId": mds_id, "materialRecyclateVO": view,
-                                         "_t": _stamp()})
+                                payload={"mdsId": mds_id, "structId": struts_id,
+                                         "materialRecyclateVO": view, "_t": _stamp()})
 
     async def b_standard_materials(self, mds_id: str) -> Any:
         """Asked twice before the recyclate write. Answered false both times;

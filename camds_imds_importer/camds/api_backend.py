@@ -500,7 +500,8 @@ class ApiBackend:
         await self.api.b_standard_materials(mds_id)
         await self.api.set_fields(self.root.struts_id, {})
 
-        await self.api.set_material_recyclate(mds_id, dict(RECYCLATE_NONE))
+        await self.api.set_material_recyclate(mds_id, self.root.struts_id,
+                                              dict(RECYCLATE_NONE))
         await self._load(self.root.struts_id)
         await self.api.set_fields(self.root.struts_id, {})
         await self.api.save(self.root.struts_id, mds_id)

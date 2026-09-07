@@ -80,18 +80,27 @@ class ApplicationMapping:
 
         How a pairing was first arrived at does not change by using it again:
         re-recording keeps the original provenance, so a match the software made
-        never comes to look like one a person approved.
+        never comes to look like one a person approved. The timestamp is kept
+        for the same reason - it says when the pairing was decided, not when it
+        was last used - and this file is in version control, where a timestamp
+        rewritten on every run is noise that blocks a branch switch.
+
+        A pairing that resolves to a different option is a new decision, and
+        takes a new timestamp.
         """
         existing = self.entries.get(key(substance, application_text))
+        recorded_at = datetime.now(timezone.utc).isoformat()
         if existing:
             resolution = Resolution(resolution.value, resolution.label, existing.get("source", resolution.source))
+            if str(existing.get("camds_value")) == str(resolution.value):
+                recorded_at = existing.get("recorded_at", recorded_at)
         self.entries[key(substance, application_text)] = {
             "substance": substance,
             "imds_application": application_text,
             "camds_value": resolution.value,
             "camds_label": resolution.label,
             "source": resolution.source,
-            "recorded_at": datetime.now(timezone.utc).isoformat(),
+            "recorded_at": recorded_at,
         }
 
     def save(self) -> None:

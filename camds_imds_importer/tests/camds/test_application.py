@@ -8,7 +8,7 @@ import json
 
 import pytest
 
-from camds_imds_importer.camds.application_mapping import ApplicationMapping, Resolution, normalise
+from camds_imds_importer.camds.application_mapping import ApplicationMapping, Resolution, key, normalise
 from camds_imds_importer.camds.import_plan import ImportRequest
 from camds_imds_importer.camds.tree_import import TreeImporter
 
@@ -270,3 +270,31 @@ def test_reusing_a_pairing_does_not_make_it_look_human_approved(tmp_path):
 
     entry = next(iter(json.loads((tmp_path / "m.json").read_text(encoding="utf-8"))["entries"].values()))
     assert entry["source"] == "exact-name-match", "provenance must survive being used"
+
+
+def test_using_a_pairing_again_does_not_restamp_it(tmp_path):
+    """recorded_at says when the pairing was decided, not when it was last used.
+    This file is in version control, and a timestamp rewritten on every run is
+    noise that blocks a branch switch."""
+    mapping = ApplicationMapping(tmp_path / "m.json")
+    mapping.record("Nickel", IMDS_NICKEL, Resolution("38", "Other application", "exact-name-match"))
+    first = mapping.entries[key("Nickel", IMDS_NICKEL)]["recorded_at"]
+
+    mapping.record("Nickel", IMDS_NICKEL, Resolution("38", "Other application", "exact-name-match"))
+    assert mapping.entries[key("Nickel", IMDS_NICKEL)]["recorded_at"] == first
+
+
+def test_a_pairing_that_resolves_differently_is_a_new_decision(tmp_path):
+    """Dated from a stored value rather than a second clock reading: two calls
+    in the same run land in the same millisecond on Windows."""
+    mapping = ApplicationMapping(tmp_path / "m.json")
+    mapping.record("Nickel", IMDS_NICKEL, Resolution("38", "Other application", "exact-name-match"))
+    mapping.entries[key("Nickel", IMDS_NICKEL)]["recorded_at"] = "2020-01-01T00:00:00+00:00"
+
+    mapping.record("Nickel", IMDS_NICKEL, Resolution("39", "Not applicable", "exact-name-match"))
+    entry = mapping.entries[key("Nickel", IMDS_NICKEL)]
+    assert entry["camds_value"] == "39"
+    assert entry["recorded_at"] != "2020-01-01T00:00:00+00:00", "a changed pairing is redated"
+
+    mapping.record("Nickel", IMDS_NICKEL, Resolution("39", "Not applicable", "exact-name-match"))
+    assert mapping.entries[key("Nickel", IMDS_NICKEL)]["recorded_at"] == entry["recorded_at"]

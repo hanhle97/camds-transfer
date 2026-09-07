@@ -19,6 +19,7 @@ The write pattern CAMDS itself uses is load, mutate, post back:
 """
 from __future__ import annotations
 
+import asyncio
 import inspect
 import re
 import time
@@ -79,6 +80,51 @@ REL_MAX = "cmaxRate"
 
 # Portion modes, the same numbering the browser's radio inputs use.
 FROM_TO, FIXED, REST = 1, 2, 3
+
+
+# Endpoints that may be sent again after a timeout or a gateway error.
+#
+# Everything read-only is here, and so are the writes that replace state rather
+# than add to it: editNodeDate posts a whole view, saveNodeDate persists a tree,
+# addOrUpdateApply is an upsert. Sending one of those twice lands the same tree.
+#
+# The allocating calls are deliberately absent. A timeout on one of them is
+# ambiguous - CAMDS may have created the node and lost the answer - so retrying
+# risks a second Material or a duplicated substance. Those fail, and resume
+# reconciles against what CAMDS actually holds, which is what it is for.
+RETRYABLE = frozenset({
+    "/api/mds/tree/loadNodeDate", "/api/mds/tree/loadMdsTree",
+    "/api/mds/tree/canbeModifyMx", "/api/mds/tree/isStandMaterial",
+    "/api/mds/tree/editNodeDate", "/api/mds/tree/saveNodeDate",
+    "/api/mds/tree/getApplyList", "/api/mds/tree/getApplyAppstd",
+    "/api/mds/tree/addOrUpdateApply",
+    "/api/common/substance/findSubstanceByCondition",
+    "/api/mds/findMds/findMaterialByCondition",
+    "/api/mds/findMds/findComponentByCondition",
+    "/api/dataTransform/materialClassification/getMaterialClassificationList",
+})
+
+# A GET path carries its id, so it is matched by prefix.
+RETRYABLE_PREFIXES = ("/api/mds/tree/getMdsStatus/", "/api/mds/tree/getMaterialStatus/")
+
+# Only a transport failure is transient. A TypeError from a wrong call is a
+# defect, and retrying it would hide it behind three slow attempts.
+try:  # pragma: no cover - exercised whenever Playwright is installed
+    from playwright.async_api import Error as _PlaywrightError
+    TRANSPORT_ERRORS: tuple = (_PlaywrightError, asyncio.TimeoutError, OSError)
+except ImportError:  # pragma: no cover
+    TRANSPORT_ERRORS = (asyncio.TimeoutError, OSError)
+
+# CAMDS behind its gateway: a busy moment, not a refusal.
+TRANSIENT_STATUS = frozenset({429, 500, 502, 503, 504})
+
+ATTEMPTS = 4
+BACKOFF_SECONDS = 3.0
+REQUEST_TIMEOUT_MS = 60_000
+
+
+def retryable(path: str) -> bool:
+    return path in RETRYABLE or path.startswith(RETRYABLE_PREFIXES)
 
 
 def portion(mode: int, low: float | None = None, high: float | None = None) -> dict:
@@ -190,11 +236,15 @@ def search_form(*, name: str = "", symbol: str = "", own: bool = True,
 
 
 class CamdsApi:
-    def __init__(self, request, base_url: str = BASE_URL) -> None:
+    def __init__(self, request, base_url: str = BASE_URL, on_retry=None) -> None:
         # `request` is a Playwright APIRequestContext from the signed-in browser
         # context, so cookies and the CAPTCHA-gated session come with it.
         self.request = request
         self.base_url = base_url.rstrip("/")
+        # Told when a call is being sent again, so a degrading session is
+        # visible during a long run instead of being silently absorbed.
+        self.on_retry = on_retry
+        self.retries = 0
 
     def _headers(self, content_type: bool = False) -> dict:
         # CAMDS is same-origin XHR; the pages always send Origin and Referer.
@@ -204,19 +254,46 @@ class CamdsApi:
             headers["Content-Type"] = "application/json"
         return headers
 
+    async def _send(self, path: str, attempt_once) -> Any:
+        """Send, and try again when CAMDS is momentarily unreachable.
+
+        A six-hour import died on a single 30-second timeout with 1304 of 1536
+        Materials already written. One slow moment is not a reason to stop, so
+        a call that can safely be repeated is repeated - and only those.
+        """
+        url = self.base_url + path
+        for attempt in range(1, ATTEMPTS if retryable(path) else 1):
+            try:
+                response = await attempt_once(url)
+            except TRANSPORT_ERRORS as exc:
+                # A timeout or a dropped connection; CAMDS never answered.
+                self._retrying(path, attempt, str(exc).splitlines()[0])
+            else:
+                if response.status not in TRANSIENT_STATUS:
+                    return await self._unwrap(url, response)
+                self._retrying(path, attempt, f"HTTP {response.status}")
+            await asyncio.sleep(BACKOFF_SECONDS * attempt)
+        # The last attempt speaks for itself: whatever CAMDS answers now is the
+        # answer, and its own words are more use than a count of tries.
+        return await self._unwrap(url, await attempt_once(url))
+
+    def _retrying(self, path: str, attempt: int, why: str) -> None:
+        self.retries += 1
+        if self.on_retry:
+            self.on_retry(f"{path.rsplit('/', 1)[-1]} did not answer ({why}); "
+                          f"retry {attempt} of {ATTEMPTS - 1}")
+
     async def _post(self, path: str, params: dict | None = None, payload: dict | None = None) -> Any:
         body = {"_t": _stamp()} if payload is None else payload
-        url = self.base_url + path
-        response = await self.request.post(
-            url, params={k: str(v) for k, v in (params or {}).items()},
-            data=body, headers=self._headers(content_type=True))
-        return await self._unwrap(url, response)
+        sending = {k: str(v) for k, v in (params or {}).items()}
+        return await self._send(path, lambda url: self.request.post(
+            url, params=sending, data=body, headers=self._headers(content_type=True),
+            timeout=REQUEST_TIMEOUT_MS))
 
     async def _get(self, path: str, params: dict | None = None) -> Any:
         merged = {"_t": _stamp(), **{k: str(v) for k, v in (params or {}).items()}}
-        url = self.base_url + path
-        response = await self.request.get(url, params=merged, headers=self._headers())
-        return await self._unwrap(url, response)
+        return await self._send(path, lambda url: self.request.get(
+            url, params=merged, headers=self._headers(), timeout=REQUEST_TIMEOUT_MS))
 
     @staticmethod
     async def _unwrap(path: str, response) -> Any:

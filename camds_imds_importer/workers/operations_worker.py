@@ -282,8 +282,13 @@ class OperationsWorker(QThread):
                                     self.control.reset()
                                     # The API runs on the signed-in context, so it
                                     # inherits the session the operator established.
-                                    backend = (ApiBackend(CamdsApi(context.request))
-                                               if self.use_api else DraftBrowser(operations))
+                                    # A retry during a run of hours must be
+                                    # visible, not silently absorbed.
+                                    backend = (ApiBackend(CamdsApi(
+                                        context.request,
+                                        on_retry=lambda text: self.operation_progress.emit(
+                                            "CAMDS: " + text)))
+                                        if self.use_api else DraftBrowser(operations))
                                     importer = TreeImporter(backend, progress=self.node_progress.emit,
                                                             control=self.control)
                                     task = asyncio.create_task(importer.run(request, resume=options.get("resume", False)))

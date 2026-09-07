@@ -28,7 +28,7 @@ class Replay:
         self.loaded = loaded
         self.sent = None
 
-    async def post(self, url, params=None, data=None, headers=None):
+    async def post(self, url, params=None, data=None, headers=None, timeout=None):
         self.headers = headers
         if url.endswith("/loadNodeDate"):
             body = self.loaded
@@ -130,7 +130,7 @@ async def test_a_recorded_search_row_is_read_with_the_right_field_names(case):
     from camds_imds_importer.camds.api import SEARCH_CAS, SEARCH_ID, SEARCH_NAME
 
     class Search:
-        async def post(self, url, params=None, data=None, headers=None):
+        async def post(self, url, params=None, data=None, headers=None, timeout=None):
             class Response:
                 status = 200
 
@@ -152,7 +152,7 @@ async def test_a_stray_space_is_trimmed_before_searching():
     sent = {}
 
     class Capture:
-        async def post(self, url, params=None, data=None, headers=None):
+        async def post(self, url, params=None, data=None, headers=None, timeout=None):
             sent.update(data)
 
             class Response:

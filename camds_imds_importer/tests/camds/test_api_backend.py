@@ -54,12 +54,12 @@ class FakeCamds:
         return sid
 
     # ------------------------------------------------------- transport surface
-    async def post(self, url, params=None, data=None, headers=None):
+    async def post(self, url, params=None, data=None, headers=None, timeout=None):
         params = params or {}
         self.calls.append(url.rsplit("/", 1)[-1])
         return _ok(self._route(url, params, data or {}))
 
-    async def get(self, url, params=None, headers=None):
+    async def get(self, url, params=None, headers=None, timeout=None):
         return _ok(None)
 
     def _route(self, url, params, body):
@@ -326,7 +326,7 @@ async def test_prepare_checks_the_session_before_anything_is_created(tmp_path):
     class Dead:
         calls = []
 
-        async def post(self, url, params=None, data=None, headers=None):
+        async def post(self, url, params=None, data=None, headers=None, timeout=None):
             Dead.calls.append(url)
 
             class Response:
@@ -442,7 +442,7 @@ async def test_reading_a_saved_mds_announces_it_before_asking_for_the_tree(tmp_p
             order.append(("tree", params["mdsId"]))
         return original(url, params, body)
 
-    async def status(url, params=None, headers=None):
+    async def status(url, params=None, headers=None, timeout=None):
         order.append(("status", url.rsplit("/", 1)[-1]))
         return _ok(None)
 

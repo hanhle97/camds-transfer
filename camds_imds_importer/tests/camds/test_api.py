@@ -61,11 +61,11 @@ class FakeRequest:
                 return FakeResponse(body)
         return FakeResponse({"respCode": "0", "data": None, "ok": True})
 
-    async def post(self, url, params=None, data=None, headers=None):
+    async def post(self, url, params=None, data=None, headers=None, timeout=None):
         self.calls.append(("POST", url, params or {}, data))
         return self._reply(url)
 
-    async def get(self, url, params=None, headers=None):
+    async def get(self, url, params=None, headers=None, timeout=None):
         self.calls.append(("GET", url, params or {}, None))
         return self._reply(url)
 

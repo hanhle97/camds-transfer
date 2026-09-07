@@ -21,7 +21,7 @@ class Catalogue:
     def __init__(self, rows):
         self.rows = rows
 
-    async def post(self, url, params=None, data=None, headers=None):
+    async def post(self, url, params=None, data=None, headers=None, timeout=None):
         class Response:
             status = 200
 

@@ -45,8 +45,8 @@ The session is the browser **context**, not the window. Closing a page does not
 close its context, so the import, the catalogue check and the status poll keep
 working with no window open. **Open CAMDS browser** puts another window on the
 same context, and **Close browser window** closes only the page. A window is
-needed for Search, Create, Save, Leave editor, the classification wizard and
-signing in, and is reopened on demand for those. If Chromium itself exits, the
+needed for Search, the classification wizard and signing in, and is reopened on
+demand for those. If Chromium itself exits, the
 context is rebuilt from the last saved state.
 
 The API is addressed through a signed-in context rather than a fresh one, because
@@ -318,28 +318,7 @@ separate isolated check and performs no MDS operations.
   CAMDS ID, part/material number, or CAS as applicable. Choose Own, Published,
   Accepted or All sources. At least one criterion is required. The current result
   page is displayed in the app; fixed-column table clones are not duplicated.
-- Prepare a Component, Semicomponent or Material root using the form. You can
-  select a parsed IMDS node and click **Use selected IMDS node** to preload its
-  name, number, mass and classification for review. Component mass is in grams.
-- **Create and fill root** opens a new MDS, fills the supported
-  root fields and reads those fields back. CAMDS allocates a displayed ID when
-  the form opens. The browser remains open for review; **Save open draft** issues
-  Save separately and retains the editor. Manual Save does not claim persistence
-  verification; full tree import verifies through Search/View. Only Material classification `1.1.1` has
-  been validated for this flow; unsupported classifications fail before Create.
-- While an editor is open (including after a partial failure), Search, Create and
-  tree import are disabled to prevent losing the form or allocating duplicate
-  IDs. Only **Save open draft** and **Leave editor** are accepted. **Leave
-  editor** asks for confirmation, then navigates back to Search using the same
-  step the tree import performs between Materials; if CAMDS raises an
-  unsaved-data dialog it is never accepted automatically and the editor is left
-  untouched. Unsaved form data is discarded, but a draft already saved keeps its
-  allocated ID. Leaving stays available after a failure, so recovering does not
-  require discarding the whole browser session. **Close browser session** also
-  finishes, without preserving unsaved data.
-
-The `CREATE_ROOT` workflow mode opens the manual root form. `DRY_RUN` remains a
-local plan only. `IMPORT_TREE` opens the full transfer review. Delete, Send,
+`DRY_RUN` remains a local plan only. `IMPORT_TREE` opens the full transfer review. Delete, Send,
 Submit, Propose, attachment upload and Module creation are not automated.
 No generic "Confirm" handler is used: classification-wizard Next is distinct
 from the editor's Next/Save navigation.

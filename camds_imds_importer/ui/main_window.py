@@ -136,7 +136,7 @@ class MainWindow(QMainWindow):
         self.resume_button = QPushButton("Resume")
         self.stop_button = QPushButton("Stop")
         self.mode = QComboBox()
-        self.mode.addItems(("PARSE_ONLY", "DRY_RUN", "CREATE_ROOT", "IMPORT_TREE"))
+        self.mode.addItems(("PARSE_ONLY", "DRY_RUN", "IMPORT_TREE"))
         self.mode.setCurrentText("DRY_RUN")
         buttons.addWidget(QLabel("Mode:"))
         buttons.addWidget(self.mode)
@@ -180,12 +180,6 @@ class MainWindow(QMainWindow):
         if self.mode.currentText() == "IMPORT_TREE":
             self.tabs.setCurrentWidget(self.camds_tab)
             self.camds_tab.review_import()
-            return
-        if self.mode.currentText() == "CREATE_ROOT":
-            self.tabs.setCurrentWidget(self.camds_tab)
-            if self.document:
-                self.camds_tab.set_document(self.document)
-                self.camds_tab.load_node()
             return
         if self.mode.currentText() == "DRY_RUN" and self.document and self.source_path:
             output = Path("output") / self.source_path.stem / "dry_run_plan.json"
@@ -596,7 +590,7 @@ class MainWindow(QMainWindow):
         self.validate_button.setEnabled(state == AppState.PARSED)
         ready_data = self.document is not None and state in {AppState.READY, AppState.CAMDS_AUTHENTICATED}
         self.start_button.setEnabled(ready_data)
-        self.start_button.setText("Review Create Root" if self.mode.currentText() == "CREATE_ROOT" else "Start Import")
+        self.start_button.setText("Start Import")
         importing = self.camds_tab.importing
         control = getattr(self.camds_tab.worker, "control", None)
         self.pause_button.setEnabled(importing and control is not None and not control.paused)

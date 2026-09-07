@@ -147,8 +147,7 @@ async def test_the_api_page_is_on_the_camds_origin_and_is_not_the_window(tmp_pat
 
 def test_only_the_actions_that_draw_a_page_need_a_window():
     """Everything else runs on the request context, with no window at all."""
-    assert NEEDS_BROWSER == {"search", "create", "save", "leave_editor",
-                             "discover_classifications", "login"}
+    assert NEEDS_BROWSER == {"search", "discover_classifications", "login"}
     for action in ("import_tree", "check_substances"):
         assert action in ACTION_POLICY
         assert action not in NEEDS_BROWSER, f"{action} must survive a closed window"

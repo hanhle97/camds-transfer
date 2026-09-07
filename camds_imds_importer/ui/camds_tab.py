@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (
 from ..camds.import_control import brief
 from ..camds.import_plan import ImportRequest
 from ..camds.material_classifications import classification_code, describe, known_codes, sort_key
-from ..camds.operations import SearchRequest, CreateRequest, KINDS
+from ..camds.operations import SearchRequest, KINDS
 from ..workers.operations_worker import OperationsWorker
 from .import_dialog import ImportDialog
 
@@ -21,9 +21,6 @@ from .import_dialog import ImportDialog
 # added to one map and not the others used to reach the user as a KeyError.
 SUBMIT_STATUS = {
     "search": "Searching CAMDS…",
-    "create": "Preparing root…",
-    "save": "Saving open draft…",
-    "leave_editor": "Leaving the editor and returning to Search…",
     "discover_classifications": "Opening the classification wizard to record it; nothing is created…",
     "check_substances": "Looking up every substance of the parsed tree; nothing is created…",
     "import_tree": "Transferring parsed tree; saving each step…",
@@ -109,35 +106,6 @@ class CamdsTab(QWidget):
         self.search_button = QPushButton("Search")
         search_form.addRow(self.search_button)
         forms_layout.addWidget(search_group)
-        create_group = QGroupBox("Prepare one MDS root — not saved")
-        create_form = QFormLayout(create_group)
-        self.create_kind = QComboBox()
-        self.create_kind.addItems(KINDS[:3])
-        self.create_name, self.create_number, self.create_mass = (QLineEdit() for _ in range(3))
-        self.create_classification = QComboBox()
-        self.create_classification.addItem("", "")
-        for code in sorted(known_codes(), key=sort_key):
-            label = f"{code}: {describe(code)}" if describe(code) else code
-            self.create_classification.addItem(label, code)
-        self.create_remark = QPlainTextEdit()
-        self.create_remark.setMaximumHeight(65)
-        self.source_node = QComboBox()
-        self.source_node.addItem("No parsed IMDS document", None)
-        self.load_node_button = QPushButton("Use selected IMDS node")
-        for label, widget in (("IMDS node", self.source_node), ("", self.load_node_button), ("Type", self.create_kind), ("Name", self.create_name), ("Part / Material No.", self.create_number), ("Mass (g)", self.create_mass), ("Material classification", self.create_classification), ("Remark", self.create_remark)):
-            create_form.addRow(label, widget)
-        self.create_notice = QLabel("This form prepares one root. Use Import parsed tree for child nodes, Material mapping and Save after each step. Send/Submit are never automated.")
-        self.create_notice.setWordWrap(True)
-        create_form.addRow(self.create_notice)
-        self.create_button = QPushButton("Create and fill root")
-        self.save_button = QPushButton("Save open draft")
-        self.save_button.setEnabled(False)
-        self.leave_button = QPushButton("Leave editor")
-        self.leave_button.setEnabled(False)
-        create_form.addRow(self.create_button)
-        bar.addWidget(self.save_button)
-        bar.addWidget(self.leave_button)
-        forms_layout.addWidget(create_group)
         root.addWidget(self.forms)
         self.results = QTableWidget()
         self.results.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -145,17 +113,12 @@ class CamdsTab(QWidget):
         self.open_button.clicked.connect(self.open_session)
         self.close_button.clicked.connect(self.close_browser)
         self.search_button.clicked.connect(self.search)
-        self.create_button.clicked.connect(self.create)
-        self.save_button.clicked.connect(self.save)
-        self.leave_button.clicked.connect(self.leave_editor)
         self.import_tree_button.clicked.connect(self.review_import)
         self.sign_in_button.clicked.connect(self.request_sign_in)
         self.pause_button.clicked.connect(self.pause_import)
         self.resume_button.clicked.connect(self.resume_import)
         self.stop_button.clicked.connect(self.stop_import)
-        self.load_node_button.clicked.connect(self.load_node)
         self.search_kind.currentTextChanged.connect(self._kind_changed)
-        self.create_kind.currentTextChanged.connect(self._kind_changed)
         self._kind_changed()
         self._update()
 
@@ -165,18 +128,9 @@ class CamdsTab(QWidget):
         self.search_id.setEnabled(not substance)
         self.search_number.setEnabled(not substance)
         self.search_source.setEnabled(not substance)
-        self.create_mass.setEnabled(self.create_kind.currentText() == "Component")
-        self.create_classification.setEnabled(self.create_kind.currentText() == "Material")
 
     def set_document(self, document) -> None:
         self.parsed_root = document.root.to_dict()
-        self.source_node.clear()
-        def visit(node):
-            if node.node_type.value in ("COMPONENT", "SEMICOMPONENT", "MATERIAL"):
-                self.source_node.addItem(f"{node.node_type.value}: {node.name}", node.to_dict())
-            for child in node.children:
-                visit(child)
-        visit(document.root)
         self._update()
 
     def review_import(self) -> None:
@@ -221,21 +175,6 @@ class CamdsTab(QWidget):
             return False
         self._submit("check_substances", ImportRequest(self.parsed_root))
         return True
-
-    def load_node(self) -> None:
-        node = self.source_node.currentData()
-        if not node:
-            return
-        kind = {"COMPONENT": "Component", "SEMICOMPONENT": "Semicomponent", "MATERIAL": "Material"}[node["node_type"]]
-        self.create_kind.setCurrentText(kind)
-        self.create_name.setText(node["name"])
-        self.create_number.setText((node.get("material_number") if kind == "Material" else node.get("part_number")) or "")
-        self.create_mass.setText(str(node["weight_g"]) if node.get("weight_g") is not None else "")
-        code = classification_code(node.get("classification"))
-        index = self.create_classification.findData(code) if code else -1
-        self.create_classification.setCurrentIndex(max(index, 0))
-        self.create_remark.clear()
-        self.status.setText("IMDS node loaded for review. Only this root will be filled; its children are not imported." + (" Material classification is unsupported; automatic Create is unavailable for this classification." if kind == "Material" and index < 0 else ""))
 
     def open_session(self) -> None:
         """Start the session, or put another window on the one already running."""
@@ -364,13 +303,6 @@ class CamdsTab(QWidget):
         substance = self.search_kind.currentText() == "Basic Substance"
         self._submit("search", SearchRequest(self.search_kind.currentText(), self.search_name.text().strip(), "" if substance else self.search_id.text().strip(), "" if substance else self.search_number.text().strip(), self.search_cas.text().strip() if substance else "", self.search_source.currentText()))
 
-    def create(self) -> None:
-        kind = self.create_kind.currentText()
-        self._submit("create", CreateRequest(kind, self.create_name.text().strip(), self.create_number.text().strip(), self.create_mass.text().strip() if kind == "Component" else "", self.create_classification.currentData() if kind == "Material" else "", self.create_remark.toPlainText()))
-
-    def save(self) -> None:
-        self._submit("save", None)
-
     def discover_classifications(self) -> None:
         """Record the material classification wizard so more than 1.1.1 can be supported."""
         confirm = QMessageBox.question(
@@ -384,8 +316,6 @@ class CamdsTab(QWidget):
         if confirm == QMessageBox.StandardButton.Yes:
             self._submit("discover_classifications", None)
 
-    def leave_editor(self) -> None:
-        """Return to Search so one Create does not dead-end the whole session."""
         confirm = QMessageBox.question(
             self, "Leave MDS editor",
             "Leave the open MDS editor and return to Search?\n\n"
@@ -413,7 +343,6 @@ class CamdsTab(QWidget):
         # has to see; a completed run must not bury them.
         for finding in (result.get("warnings") or []) + (result.get("skipped") or []):
             self.log_message.emit("Reported: " + finding)
-        self.save_button.setEnabled(self.editor_open)
         if result["kind"] == "search":
             self.results.setColumnCount(len(result["columns"]))
             self.results.setHorizontalHeaderLabels(result["columns"])
@@ -454,7 +383,6 @@ class CamdsTab(QWidget):
         self.browser_open = False
         self.session_changed.emit(self.session)
         self.editor_open = False
-        self.save_button.setEnabled(False)
         self.status.setText((self.last_error + " " if self.last_error else "") + "Browser session closed. Open a new session to continue.")
         self._update()
 
@@ -466,10 +394,6 @@ class CamdsTab(QWidget):
         self.open_button.setEnabled(self.worker is None or (idle and not self.browser_open))
         self.close_button.setEnabled(idle and self.browser_open)
         self.forms.setEnabled(idle and not self.editor_open)
-        self.save_button.setEnabled(idle and self.editor_open and not self.last_error)
-        # Leaving stays available after a failure: it is the recovery path that
-        # does not throw away the whole browser session.
-        self.leave_button.setEnabled(idle and self.editor_open)
         self.import_tree_button.setEnabled(idle and not self.editor_open and self.parsed_root is not None)
         self.sign_in_button.setEnabled(idle and not self.editor_open)
         control = getattr(self.worker, "control", None)

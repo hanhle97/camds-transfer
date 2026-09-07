@@ -206,27 +206,6 @@ class CamdsOperations:
                 "them has not been discovered, so nothing is guessed. An ID is already allocated: "
                 "finish or discard this Material in CAMDS, then map it as an existing Material reference.")
 
-    async def leave_editor(self, request=None) -> dict:
-        """Return to Search from an open editor, so one Create does not dead-end the session.
-
-        This is the same navigation the tree import performs between Materials.
-        An unsaved-data dialog is never accepted automatically: if CAMDS raises
-        one, the editor is left exactly as it was.
-        """
-        if not self.editor_open:
-            raise RuntimeError("No open MDS editor to leave")
-        await self.page.goto(SEARCH_URL, wait_until="commit", timeout=NAVIGATION_TIMEOUT_MS)
-        for _ in range(2):
-            await asyncio.sleep(0.35)
-            await expect(self.page.locator('.el-loading-mask:visible')).to_have_count(0, timeout=60_000)
-        if await self.page.get_by_role("dialog").count():
-            raise RuntimeError("CAMDS blocked navigation with a dialog; the editor is unchanged. Review it in the browser.")
-        await self.page.get_by_role("tab", name="Component", exact=True).wait_for(timeout=30_000)
-        self.editor_open = False
-        self.results_ready = False
-        return {"kind": "leave_editor", "identity": "", "editor_open": False,
-                "note": "Left the MDS editor and returned to Search. Unsaved form data was discarded; any draft already saved keeps its allocated ID."}
-
     async def save(self, request=None) -> dict:
         if not self.editor_open:
             raise RuntimeError("No open MDS editor to save")

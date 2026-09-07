@@ -34,21 +34,6 @@ def test_open_session_has_no_undefined_editor_variable(monkeypatch):
     tab.close()
 
 
-def test_manual_save_accepts_none_and_keeps_editor_locked():
-    app = QApplication.instance() or QApplication([])
-    tab = CamdsTab()
-    sent = []
-    tab.worker = SimpleNamespace(stopping=threading.Event(), submit=lambda *args: sent.append(args))
-    tab.editor_open = True
-    tab.save()
-    assert sent == [("save", None)]
-    tab._result({"kind": "save", "editor_open": True, "note": "pending readback"})
-    assert tab.editor_open
-    assert not tab.forms.isEnabled()
-    tab.worker = None
-    tab.close()
-
-
 def sound_tree(**material):
     substance = {"uid": "s", "node_type": "SUBSTANCE", "name": "Iron", "cas_number": "7439-89-6",
                  "percentage": 100, "children": []}

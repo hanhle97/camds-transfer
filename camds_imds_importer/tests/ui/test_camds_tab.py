@@ -29,7 +29,7 @@ def test_tab_search_ignores_disabled_criteria_and_serializes_work():
     tab.close()
 
 
-def test_partial_create_failure_locks_controls_but_allows_close():
+def test_a_failure_locks_the_controls_but_never_traps_the_operator():
     app = QApplication.instance() or QApplication([])
     tab = CamdsTab()
     tab.worker = SimpleNamespace(stopping=threading.Event())
@@ -38,20 +38,9 @@ def test_partial_create_failure_locks_controls_but_allows_close():
     tab.browser_open = True
     tab._failed("Field missing", True)
     assert not tab.forms.isEnabled()
-    assert tab.close_button.isEnabled()
-    assert tab.leave_button.isEnabled(), "leaving the editor is the recovery path"
+    assert tab.close_button.isEnabled(), "closing the window is the way out"
     assert "partially filled" in tab.status.text()
     tab.worker = None
     tab.close()
 
 
-def test_loading_node_does_not_silently_map_unsupported_classification():
-    app = QApplication.instance() or QApplication([])
-    tab = CamdsTab()
-    node = MDSNode("m", 1, NodeType.MATERIAL, "Polymer", classification="8.4", material_number="M1")
-    tab.set_document(SimpleNamespace(root=node))
-    tab.load_node()
-    assert tab.create_classification.currentText() == ""
-    assert "unsupported" in tab.status.text()
-    assert tab.create_number.text() == "M1"
-    tab.close()

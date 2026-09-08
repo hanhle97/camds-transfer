@@ -63,11 +63,18 @@ class ImportControl:
         self._resume = threading.Event()
         self._resume.set()
         self._stop = threading.Event()
+        # A question the run cannot answer for itself, waiting for a person.
+        self._answered = threading.Event()
+        self._answer = False
+        self.question = ""
 
     def reset(self) -> None:
         """Re-arm for a new import without swapping the object the UI already holds."""
         self._stop.clear()
         self._resume.set()
+        self._answered.clear()
+        self._answer = False
+        self.question = ""
 
     def pause(self) -> None:
         self._resume.clear()
@@ -101,6 +108,34 @@ class ImportControl:
                 on_resume()
         if self._stop.is_set():
             raise ImportStopped("Import stopped by operator between steps; saved objects are unchanged.")
+
+
+    async def ask(self, text: str, tell) -> bool:
+        """Put a question to the operator and wait at a step boundary for it.
+
+        Only for a decision the run genuinely cannot make: what CAMDS holds is
+        not what the report describes, and continuing or not is a judgement
+        about the data, not about the software. It waits the way a pause waits,
+        so Stop still works while the question is on screen.
+
+        True continues, False stops.
+        """
+        self.question = text
+        self._answer = False
+        self._answered.clear()
+        tell(text)
+        while not self._answered.is_set():
+            if self._stop.is_set():
+                raise ImportStopped(
+                    "Import stopped by operator between steps; saved objects are unchanged.")
+            await asyncio.sleep(0.1)
+        self.question = ""
+        return self._answer
+
+    def answer(self, keep_going: bool) -> None:
+        """The operator's answer, from the Qt thread."""
+        self._answer = bool(keep_going)
+        self._answered.set()
 
 
 class Reporter:

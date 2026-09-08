@@ -197,6 +197,7 @@ class CamdsTab(QWidget):
         self.worker.browser_changed.connect(self._browser_changed)
         self.worker.login_stage.connect(self.log_message.emit)
         self.worker.notice.connect(self._notice)
+        self.worker.question.connect(self._question)
         self.worker.result.connect(self._result)
         self.worker.failed.connect(self._failed)
         self.worker.session_error.connect(lambda message: self._failed(message, self.editor_open))
@@ -230,6 +231,28 @@ class CamdsTab(QWidget):
         self._update()
         self.session_ready.emit()
 
+    def _question(self, text: str) -> None:
+        """A decision the run stopped to ask about.
+
+        The import is waiting on the answer, so this is modal on purpose. Stop
+        still works while it is open: the run checks for it as it waits.
+        """
+        self.log_message.emit(text)
+        box = QMessageBox(self)
+        box.setWindowTitle("The import needs a decision")
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setText(text)
+        # Named after what each one does rather than Yes and No: the two
+        # answers are not opposites of one question but two different acts.
+        skip = box.addButton("Skip them and continue", QMessageBox.ButtonRole.AcceptRole)
+        box.addButton("Stop the import", QMessageBox.ButtonRole.RejectRole)
+        box.setDefaultButton(skip)
+        box.exec()
+        keep_going = box.clickedButton() is skip
+        self.worker.control.answer(keep_going)
+        self.log_message.emit("Answered: " + ("skip them and continue" if keep_going
+                                              else "stop the import"))
+
     def _notice(self, message: str) -> None:
         """Non-fatal condition: the session stays usable."""
         self.status.setText(message)
@@ -243,7 +266,7 @@ class CamdsTab(QWidget):
         self._update()
 
     def _submit(self, action, request, **options) -> None:
-        if not self.worker or self.busy or (self.editor_open and action not in ("save", "leave_editor")):
+        if not self.worker or self.busy:
             return
         try:
             if request is not None and hasattr(request, "validate"):
@@ -339,16 +362,6 @@ class CamdsTab(QWidget):
             QMessageBox.StandardButton.No)
         if confirm == QMessageBox.StandardButton.Yes:
             self._submit("discover_classifications", None)
-
-        confirm = QMessageBox.question(
-            self, "Leave MDS editor",
-            "Leave the open MDS editor and return to Search?\n\n"
-            "Anything you have not saved is discarded. A draft you already saved keeps its allocated CAMDS ID "
-            "and is not deleted. Nothing is sent or submitted.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No)
-        if confirm == QMessageBox.StandardButton.Yes:
-            self._submit("leave_editor", None)
 
     def _result(self, result) -> None:
         self.busy = False

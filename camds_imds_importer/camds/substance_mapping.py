@@ -56,6 +56,16 @@ class SubstanceMapping:
         csid = (entry or {}).get("csid")
         return str(csid) if csid else None
 
+    def answer(self, node) -> dict | None:
+        """The whole recorded entry, so a caller can tell who chose it.
+
+        `chosen` says which CAMDS entry; this says whether a person said so.
+        The difference decides what to do when CAMDS's search no longer offers
+        that entry: the software's own pick is made again, a person's stands.
+        """
+        entry = self.entries.get(key(node))
+        return entry if entry and entry.get("csid") else None
+
     def auto(self, node, picked, rows) -> None:
         """Record a row the software picked because the catalogue was unclear.
 

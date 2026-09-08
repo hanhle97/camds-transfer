@@ -89,3 +89,38 @@ def test_a_failure_locks_the_controls_but_never_traps_the_operator():
     tab.close()
 
 
+
+
+def test_a_question_from_the_run_is_answered_through_the_control():
+    """The run waits on the answer, so the dialog is modal and the answer goes
+    back the same way Pause and Stop do."""
+    import os
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication, QMessageBox
+
+    from camds_imds_importer.camds.import_control import ImportControl
+    from camds_imds_importer.ui.camds_tab import CamdsTab
+
+    QApplication.instance() or QApplication([])
+    tab = CamdsTab()
+    control = ImportControl()
+    tab.worker = type("W", (), {"control": control})()
+    shown = []
+
+    def press_skip(self):
+        shown.append(self.text())
+        # The accepting button is the one the run treats as "continue".
+        for button in self.buttons():
+            if self.buttonRole(button) == QMessageBox.ButtonRole.AcceptRole:
+                self.setProperty("pressed", button)
+                return 0
+        return 0
+
+    QMessageBox.exec = press_skip
+    QMessageBox.clickedButton = lambda self: self.property("pressed")
+    tab._question("2 substance(s) cannot be identified…")
+
+    assert shown == ["2 substance(s) cannot be identified…"]
+    assert control._answered.is_set() and control._answer is True
+    tab.worker = None

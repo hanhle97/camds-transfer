@@ -87,3 +87,20 @@ def test_both_outcomes_reach_the_operator_who_is_not_watching(monkeypatch):
     assert len(alerted) == 2, "the taskbar is flashed rather than the window raised"
     assert "it broke" in shown[1]
     assert "Build:" not in shown[0]
+
+
+def test_what_was_left_out_is_named_in_the_summary():
+    """A tree with something missing and no word about what is worse than one
+    that says so: nobody can see it by looking at what was imported."""
+    from camds_imds_importer.ui.import_report import summary
+
+    result = {"nodes": 40, "total": 40, "identity": "CA_5_1/0.01", "note": "",
+              "skipped": ["PBT: not imported, at Parent / Child / PBT",
+                          "PBT: left out because 'ISO 1043-4 FR(17) …' could not be identified "
+                          "in the CAMDS catalogue, IMDS having cut that name short",
+                          "Steel: reused CA_8_9/1 already in CAMDS"]}
+    title, body = summary(result, parse_seconds=15, import_seconds=90, nodes=4293)
+    assert title == "Import complete"
+    assert "1 node(s) were left out of the import, at:" in body
+    assert "  PBT: not imported, at Parent / Child / PBT" in body
+    assert "1 Material(s) already in CAMDS were reused." in body

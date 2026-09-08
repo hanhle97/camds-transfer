@@ -23,6 +23,7 @@ from ..camds.discovery import discover_material_classifications
 from ..camds.import_control import ImportControl
 from ..camds.import_plan import MAX_REPORTED_ERRORS
 from ..camds.page_transport import PageTransport
+from ..camds import survey
 from ..camds.login import LoginStatus
 from ..camds.operations import CamdsOperations, SEARCH_URL
 from ..camds.session import SessionStatus, session_status, sign_in
@@ -30,10 +31,7 @@ from ..camds.tree_import import TreeImporter, DraftBrowser
 
 LOGIN_URL = "https://catarc.camds.org.cn/#/login"
 PROGRESS_TEXT = {
-    "search": "Searching…",
-    "create": "Creating MDS root…",
-    "save": "Saving…",
-    "leave_editor": "Leaving the editor…",
+    "search": "Asking CAMDS what it already holds…",
     "discover_classifications": "Recording the classification wizard…",
     "check_substances": "Checking every substance in the catalogue…",
     "import_tree": "Importing parsed tree…",
@@ -54,9 +52,6 @@ APP_SHELL = "() => { const app = document.querySelector('#app'); return app && a
 ACTION_POLICY = {
     "login": CamdsAction.OPEN,
     "search": CamdsAction.SEARCH,
-    "create": CamdsAction.CREATE,
-    "save": CamdsAction.SAVE_DRAFT,
-    "leave_editor": CamdsAction.OPEN,
     "discover_classifications": CamdsAction.READ,
     "check_substances": CamdsAction.SEARCH,
     "import_tree": CamdsAction.SAVE_DRAFT,
@@ -65,9 +60,8 @@ ACTION_POLICY = {
 }
 
 # Actions that need a rendered page. Everything else runs on the API context,
-# which outlives any window.
-NEEDS_BROWSER = frozenset({"search", "create", "save", "leave_editor",
-                           "discover_classifications", "login"})
+# which outlives any window. Search asks CAMDS directly now, so it does not.
+NEEDS_BROWSER = frozenset({"discover_classifications", "login"})
 
 
 class OperationsWorker(QThread):
@@ -80,6 +74,8 @@ class OperationsWorker(QThread):
     login_stage = Signal(str)
     session_changed = Signal(str)
     notice = Signal(str)
+    # A question the run cannot answer for itself; answered through control.answer().
+    question = Signal(str)
     # True when a CAMDS window is open. The session does not depend on it.
     browser_changed = Signal(bool)
 
@@ -123,6 +119,29 @@ class OperationsWorker(QThread):
         """Reach the Search page tolerantly: commit first, then wait for the SPA shell."""
         await page.goto(SEARCH_URL, wait_until="commit", timeout=NAVIGATION_TIMEOUT_MS)
         await page.wait_for_function(APP_SHELL, timeout=NAVIGATION_TIMEOUT_MS)
+
+    async def _survey(self, api, request):
+        """Ask CAMDS about every item at once. Read-only.
+
+        One search per item, so a report of 52 Materials is 52 calls: slower
+        than one page of rows, and the only thing that answers the question the
+        operator actually has before an import.
+        """
+        kind, items = request["kind"], request["items"]
+        find = (CamdsApi(api).find_material if kind == "Material"
+                else CamdsApi(api).find_component)
+        found = []
+        for index, item in enumerate(items, start=1):
+            if self.stopping.is_set():
+                break
+            if index % 10 == 0 or index == len(items):
+                self.operation_progress.emit(f"CAMDS: {index}/{len(items)} looked up…")
+            rows = await find(name=item.name, symbol=item.number)
+            found.append(survey.summarise(item, rows))
+        return {"kind": "search", "identity": "", "editor_open": False,
+                "columns": list(survey.HEADINGS),
+                "rows": [row.columns for row in found],
+                "note": survey.note(found, kind)}
 
     async def _check_substances(self, api, request):
         """Look up every distinct substance this import needs. Read-only.
@@ -390,11 +409,14 @@ class OperationsWorker(QThread):
                                             "CAMDS: " + text)))
                                         if self.use_api else DraftBrowser(operations))
                                     importer = TreeImporter(backend, progress=self.node_progress.emit,
-                                                            control=self.control)
+                                                            control=self.control,
+                                                            ask=self.question.emit)
                                     task = asyncio.create_task(importer.run(
                                         request, resume=options.get("resume", False),
                                         reuse=options.get("reuse", True),
                                         release=options.get("release", False)))
+                                elif action == "search":
+                                    task = asyncio.create_task(self._survey(api, request))
                                 elif action == "check_substances":
                                     task = asyncio.create_task(self._check_substances(api, request))
                                 elif action == "discover_classifications":

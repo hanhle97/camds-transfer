@@ -41,15 +41,26 @@ def summary(result: dict, *, parse_seconds: float, import_seconds: float,
     ]
     reused = _counted(findings, "reused ")
     released = _counted(findings, "released as ")
+    left_out = [f for f in findings if "not imported, at " in f]
     if reused:
         lines.append(f"{reused} Material(s) already in CAMDS were reused.")
     if released:
         lines.append(f"{released} Material(s) were released.")
     if warnings:
         lines.append(f"{len(warnings)} item(s) imported as declared - see the Logs tab.")
-    unreviewed = [f for f in findings if "reused " not in f and "released as " not in f]
+    if left_out:
+        # Named here and not only in the log: what is missing from the tree is
+        # the one thing nobody can see by looking at what was imported.
+        lines.append("")
+        lines.append(f"{len(left_out)} node(s) were left out of the import, at:")
+        lines.extend("  " + note for note in left_out[:10])
+        if len(left_out) > 10:
+            lines.append(f"  ... and {len(left_out) - 10} more, in the Logs tab")
+    unreviewed = [f for f in findings
+                  if "reused " not in f and "released as " not in f and f not in left_out]
     if unreviewed:
-        lines.append(f"{len(unreviewed)} left unset or picked automatically - see the Logs tab.")
+        lines.append(f"{len(unreviewed)} left unset, picked automatically, or left out - "
+                     "see the Logs tab.")
     lines += ["", result.get("identity", ""), result.get("note", "")]
     return "Import complete", "\n".join(line for line in lines if line is not None)
 

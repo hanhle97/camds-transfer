@@ -22,6 +22,19 @@ def real_cas(node) -> str | None:
     return cas if CAS_PATTERN.fullmatch(cas) else None
 
 
+# IMDS prints the Description column 132 characters wide and cuts whatever does
+# not fit, mid-word: "...in combination with antimony com". Two unrelated
+# reports carry names of exactly this length and none carries a longer one, so
+# the cut is the format's, not one report's accident. A name of exactly this
+# length is therefore not necessarily the substance's whole name, and must not
+# be compared to a catalogue entry as though it were.
+IMDS_NAME_LIMIT = 132
+
+
+def truncated(name: str | None) -> bool:
+    return len(str(name or "")) == IMDS_NAME_LIMIT
+
+
 def substance_key(node) -> str:
     """Identity of a substance within one material.
 
@@ -366,6 +379,14 @@ class ImportRequest:
                 # substance is looked up by name instead.
                 if not real_cas(node) and not name.strip():
                     fail(f"{label}: a substance needs either a CAS number or a name to look up")
+                elif not real_cas(node) and truncated(name):
+                    # Said before the run rather than discovered 24 minutes into
+                    # one: this is the name the catalogue lookup has to work
+                    # with, and there is no CAS to fall back on.
+                    warn(f"{label}: IMDS cut this name at {IMDS_NAME_LIMIT} characters, so the "
+                         "report does not carry the whole of it. Looked up on the part that was "
+                         "printed; if that does not identify one entry, answer it in "
+                         "config/substance_mapping.json")
                 elif not real_cas(node) and len(name) > 50:
                     # Also a DOM limit, on the search box. The API search takes
                     # the name as JSON. If CAMDS does cut it short the search
@@ -491,6 +512,49 @@ class ImportRequest:
                     seen.add(key)
                     found.append(node)
         return found
+
+    def without(self, uids) -> list[str]:
+        """Take Materials out of the tree, and say where each one was.
+
+        A Material the catalogue cannot compose is not imported half-built; it
+        is left out whole, so what reaches CAMDS is true as far as it goes.
+        Everything after this - the step count, the paths, the child counts the
+        read-back checks - is worked out from the tree, so removing the node is
+        all that has to happen, and nothing downstream needs to know.
+
+        A Component or Semicomponent that held nothing else goes with it: an
+        empty one describes nothing, and CAMDS refuses a Semicomponent with no
+        children anyway. Its position is reported too - a missing part of the
+        tree that nobody was told about is worse than one that is.
+        """
+        removed: list[str] = []
+
+        def visit(node, path):
+            kept = []
+            for child in node.get("children") or []:
+                here = path + (str(child.get("name") or ""),)
+                if child.get("node_type") == "MATERIAL" and child.get("uid") in uids:
+                    removed.append(f"{child.get('name')}: not imported, at {' / '.join(here)}")
+                    continue
+                had = bool(child.get("children"))
+                visit(child, here)
+                if had and not child.get("children"):
+                    removed.append(
+                        f"{child.get('name')}: {str(child.get('node_type')).title()} left with "
+                        f"nothing in it, so it was not imported either, at {' / '.join(here)}")
+                    continue
+                kept.append(child)
+            node["children"] = kept
+
+        if self.root.get("node_type") == "MATERIAL" and self.root.get("uid") in uids:
+            raise ValueError(f"{self.root.get('name')} is the whole import, so skipping it "
+                             "would leave nothing to do")
+        visit(self.root, (str(self.root.get("name") or ""),))
+        if self.root.get("node_type") != "MATERIAL" and not self.root.get("children"):
+            raise ValueError(
+                "Skipping those Materials would leave nothing to import: "
+                + "; ".join(removed))
+        return removed
 
     def materials(self):
         result = []

@@ -26,7 +26,7 @@ from .api import (FIXED, FROM_TO, MASS_PER_ITEM, MATERIAL_NODE, NAME,
                   SEARCH_CAS, SEARCH_ID,
                   SEARCH_NAME, WEIGHT_UNIT, CamdsApiError, TreeNode, addressable, number,
                   portion)
-from .import_plan import proportion, real_cas
+from .import_plan import IMDS_NAME_LIMIT, proportion, real_cas, truncated
 from .substance_mapping import SubstanceMapping
 from .material_classifications import classification_code
 
@@ -514,6 +514,8 @@ class ApiBackend:
             rows = await self.api.find_substance(name=node["name"])
             hits = [r for r in rows if str(r.get(SEARCH_NAME) or "").strip().casefold() == wanted]
             criterion = f"name {node['name']!r}"
+            if not hits and truncated(node["name"]):
+                rows, hits, criterion = await self._search_cut_name(node, wanted, rows)
         if len(hits) == 1:
             return hits[0]
         chosen = self.substances.chosen(node)
@@ -521,6 +523,19 @@ class ApiBackend:
             picked = [r for r in rows if str(r.get(SEARCH_ID)) == chosen]
             if len(picked) == 1:
                 return picked[0]
+            answered = self.substances.answer(node)
+            if not rows and answered and answered.get("source") != "first-row":
+                # Nothing came back at all, so nothing contradicts the answer -
+                # a name IMDS cut short is looked up on text no search matches,
+                # and the file is then the only thing that knows what the
+                # substance is. Refusing the answer the app itself asked for
+                # would leave no way through. Rows that came back and did not
+                # include the recorded id are another matter: there the
+                # catalogue does contradict it, and the refusal below stands.
+                # A first-row pick is never honoured this way: it was the
+                # software choosing among rows, and there are none to choose
+                # among now.
+                return self._answered(node, chosen, answered, rows)
             raise CamdsApiError(
                 f"{node['name']}: the recorded choice {chosen} is no longer one of the "
                 f"{len(rows)} row(s) CAMDS offers. " + _offered(rows))
@@ -539,6 +554,49 @@ class ApiBackend:
         raise CamdsApiError(
             f"{node['name']}: searching the CAMDS substance catalogue by {criterion} "
             f"matched {len(hits)} entries exactly, not one. " + _offered(rows))
+
+    def _answered(self, node, csid, entry, rows) -> dict:
+        """The entry a person recorded, as a search row.
+
+        The candidate they chose between is used when it is still on file, so
+        the substance is added under the name CAMDS gave it rather than the
+        one IMDS cut short.
+        """
+        recorded = next((r for r in entry.get("candidates") or []
+                         if str(r.get(SEARCH_ID)) == csid), None)
+        row = recorded or {SEARCH_ID: csid, SEARCH_NAME: entry.get("chose") or node["name"]}
+        self.findings.append(
+            f"{node['name']}: CAMDS's search did not offer {csid}, and the answer recorded in "
+            f"{self.substances.path} was used - {row.get(SEARCH_NAME)!r}. " + _offered(rows))
+        return row
+
+    async def _search_cut_name(self, node, wanted, rows) -> tuple:
+        """Look a substance up on the part of its name IMDS actually printed.
+
+        The Description column is cut at 132 characters, mid-word, so the full
+        name is not in the report and no search can match it exactly. Searching
+        the whole cut string found nothing at all for "ISO 1043-4 FR(17)
+        aromatic brominated compounds ... in combination with antimony com",
+        and the run stopped 24 minutes in.
+
+        So the search is made on a shorter, whole-word head of the name - a
+        wider net, not a different substance - and a row counts only if what it
+        is called begins with everything the report did print. That is as exact
+        a match as cut text allows: it agrees over every character IMDS kept,
+        and says nothing about the characters it dropped. Anything less certain
+        is left to the unclear path, which records what it did.
+        """
+        head = node["name"][:IMDS_NAME_LIMIT // 2].rsplit(" ", 1)[0].strip() or node["name"]
+        wider = await self.api.find_substance(name=head) or rows
+        starts = [r for r in wider
+                  if str(r.get(SEARCH_NAME) or "").strip().casefold().startswith(wanted)]
+        criterion = f"the first {len(head)} characters of a name IMDS cut short, {head!r}"
+        if len(starts) == 1:
+            self.findings.append(
+                f"{node['name']}: IMDS cut this name at {IMDS_NAME_LIMIT} characters. Searching "
+                f"{head!r} offered one entry whose name continues it - "
+                f"{starts[0].get(SEARCH_NAME)!r} (id {starts[0].get(SEARCH_ID)}) - and that was used.")
+        return wider, starts, criterion
 
     # ------------------------------------------------------------------ release
     async def release_material(self, ref) -> tuple[str, str]:

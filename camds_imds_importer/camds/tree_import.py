@@ -10,16 +10,19 @@ from datetime import datetime, timezone
 
 from playwright.async_api import expect
 
-from .api import number
+from .api import CamdsApiError, number
 from .application_mapping import ApplicationMapping, Resolution, normalise
 from .import_control import ImportControl, ImportStopped, Reporter
-from .import_plan import ImportRequest, proportion, real_cas
+from .import_plan import ImportRequest, proportion, real_cas, truncated
 from .operations import CREATE_URL, NAVIGATION_TIMEOUT_MS, SEARCH_URL, CreateRequest, form_item
 
 
 # Inferred from the Basic Substance search, which this dialog reuses; the
 # recorded evidence covers only the CAS field, so a missing label fails loudly.
 SUBSTANCE_NAME_LABEL = "Name / Synonym / English Name:"
+
+NEWLINE = chr(10)
+PARAGRAPH = NEWLINE * 2
 
 
 @dataclass
@@ -468,8 +471,11 @@ def _already_saved(substance, held):
 
 class TreeImporter:
     def __init__(self, backend, directory=Path("output/camds_imports"), progress=lambda event: None,
-                 control=None, mapping=None):
+                 control=None, mapping=None, ask=None):
         self.io, self.directory, self.progress = backend, directory, progress
+        # How a question reaches a person. Without one there is nobody to ask,
+        # and an unresolved substance stops the run as it always did.
+        self.ask = ask
         self.control = control if control is not None else ImportControl()
         self.mapping = mapping if mapping is not None else ApplicationMapping()
         # Applications are always matched by wording; anything unclear is skipped.
@@ -557,6 +563,63 @@ class TreeImporter:
                    camds_value=str(resolution.value), camds_label=chosen["label"],
                    source=resolution.source)
 
+    async def _settle_cut_names(self, request) -> list[str]:
+        """Look up the substances whose names IMDS cut short, and ask about them.
+
+        The Description column of an IMDS report is 132 characters wide and cuts
+        what does not fit, mid-word. Such a name cannot be matched exactly, and
+        one of them - a flame retardant of a PBT - stopped a run 24 minutes in,
+        after 23 Materials had already been created.
+
+        The lookup that would fail then is made here instead, before CAMDS is
+        written to at all. Whether to import a tree without those Materials is a
+        judgement about the data rather than about the software, so it is put to
+        the operator: skip them and go on, or stop and answer them first.
+
+        Only cut names are asked about. Any other unresolved substance is a name
+        that is whole and simply does not match, and that still stops the run.
+        """
+        resolve = getattr(self.io, "resolve_substance", None)
+        if resolve is None:
+            return []
+        unresolved = []
+        for material in request.materials():
+            for substance in material.get("children") or []:
+                if not truncated(substance.get("name")) or real_cas(substance):
+                    continue
+                try:
+                    await resolve(substance)
+                except CamdsApiError as exc:
+                    unresolved.append((material, substance, exc))
+        if not unresolved:
+            return []
+        if self.ask is None or not await self.control.ask(self._cut_name_question(unresolved),
+                                                          self.ask):
+            raise unresolved[0][2]
+        # Why, beside where: a list of positions with no cause next to it is not
+        # something an operator can act on afterwards.
+        why = [f"{material['name']}: left out because {substance['name']!r} could not be "
+               "identified in the CAMDS catalogue, IMDS having cut that name short"
+               for material, substance, _ in unresolved]
+        return request.without({material['uid'] for material, _, _ in unresolved}) + why
+
+    def _cut_name_question(self, unresolved) -> str:
+        """What the operator is being asked, in terms of their own data."""
+        listed = NEWLINE.join(f"- {material['name']}: {substance['name']}"
+                              for material, substance, _ in unresolved)
+        answer_in = getattr(self.io, "substances", None)
+        return (
+            f"{len(unresolved)} substance(s) cannot be identified in the CAMDS catalogue, "
+            "because IMDS cut their names short at 132 characters:"
+            + PARAGRAPH + listed + PARAGRAPH
+            + "A Material is the sum of its substances, so these cannot be built truthfully. "
+            "Skipping leaves them out of the import entirely, along with anything that then "
+            "holds nothing else. Everything else is imported, and what was left out is "
+            "listed when the run finishes."
+            + PARAGRAPH
+            + "Skip them and continue, or stop and answer them in "
+            + str(answer_in.path if answer_in else "the substance mapping file") + " first?")
+
     async def run(self, request: ImportRequest, resume: bool = False, reuse: bool = True,
                   release: bool = False):
         """Import the tree.
@@ -571,9 +634,12 @@ class TreeImporter:
         self.reused = []
         self.released = []
         warnings = request.validate(self.mapping)
-        plan = request.plan()
         # Login/readiness failures should not create a duplicate-prevention journal.
         await self.io.prepare()
+        # Asked before anything is created, so a Material left out is left out
+        # whole and the step count is the one the run will actually perform.
+        self.skipped += await self._settle_cut_names(request)
+        plan = request.plan()
         journal, state = self._open_journal(request, resume, await self.io.can_reenter_saved())
         reporter = Reporter(len(plan), self.progress)
         # Field-level progress is emitted by the backend while it fills a form.

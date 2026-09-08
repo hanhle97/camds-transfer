@@ -4,6 +4,8 @@ import json
 import pytest
 
 from camds_imds_importer.camds.import_plan import ImportRequest, proportion, real_cas, substance_key
+from camds_imds_importer.camds.api import CamdsApiError
+from camds_imds_importer.camds.import_control import ImportControl
 from camds_imds_importer.camds.tree_import import TreeImporter
 
 
@@ -285,3 +287,165 @@ async def test_preflight_failure_has_no_journal_or_browser_side_effects(tmp_path
         await TreeImporter(backend, tmp_path).run(ImportRequest(root))
     assert not backend.calls
     assert not list(tmp_path.iterdir())
+
+
+# One substance of the report, named by 132 characters of a longer name that
+# IMDS did not print. It is what stopped a live run 24 minutes in.
+CUT_NAME = ('ISO 1043-4 FR(17) aromatic brominated compounds (excluding brominated diphenyl ether and biphenyls) in combination with antimony com')
+
+
+def cut_name_tree():
+    """Two Materials under one Component; only one of them cannot be composed."""
+    unbuildable = {"uid": "m2", "node_type": "MATERIAL", "name": "PBT", "classification": "5.1.b",
+                   "weight_g": 5, "children": [
+                       {"uid": "s2", "node_type": "SUBSTANCE", "name": CUT_NAME,
+                        "cas_number": None, "percentage": 100, "children": []}]}
+    root = fixture_tree()
+    root["children"][0]["children"].append(unbuildable)
+    root["children"][0]["weight_g"] = 10
+    root["weight_g"] = 20
+    return root
+
+
+class Catalogue(FakeDraftBrowser):
+    """A backend that answers the substance lookup, as the API one does."""
+
+    def __init__(self, unknown=(), **kw):
+        super().__init__(**kw)
+        self.unknown = set(unknown)
+        self.asked = []
+
+    async def add_substance(self, name, node):
+        # As the real backend does: a substance is resolved when it is added.
+        await self.resolve_substance(node)
+        return await super().add_substance(name, node)
+
+    async def resolve_substance(self, node):
+        self.asked.append(node["name"])
+        if node["name"] in self.unknown:
+            raise CamdsApiError(f"{node['name']}: matched 0 entries exactly, not one.")
+        return {"csid": "1", "enName": node["name"]}
+
+
+def answering(reply):
+    """An operator at the other end of the question, answering straight away."""
+    seen = []
+
+    def ask(text):
+        seen.append(text)
+        control.answer(reply)
+
+    control = ImportControl()
+    return control, ask, seen
+
+
+async def test_only_a_name_imds_cut_short_is_looked_up_before_the_run(tmp_path):
+    """Every other substance is looked up where it always was, as it is added:
+    checking all of them again here would double a run of hours."""
+    backend = Catalogue()
+    await TreeImporter(backend, tmp_path).run(ImportRequest(cut_name_tree()))
+    assert backend.asked[0] == CUT_NAME, "the cut name is settled before anything is created"
+    assert backend.asked.count(CUT_NAME) == 2, "then resolved again where it is added"
+    assert "Iron" not in backend.asked[:1], "a whole name is not looked up ahead of time"
+
+
+async def test_a_material_that_cannot_be_composed_is_put_to_the_operator(tmp_path):
+    """Skipping is their decision: what CAMDS holds is not what the report
+    describes, and that is a judgement about the data."""
+    backend = Catalogue(unknown={CUT_NAME})
+    control, ask, asked = answering(True)
+    importer = TreeImporter(backend, tmp_path, control=control, ask=ask)
+    result = await importer.run(ImportRequest(cut_name_tree()))
+
+    assert len(asked) == 1 and "cut their names short" in asked[0]
+    assert CUT_NAME in asked[0] and "PBT" in asked[0]
+    assert ("create", "m2") not in backend.calls, "nothing of it reached CAMDS"
+    assert ("create", "m") in backend.calls, "the rest of the tree is imported"
+    assert any("PBT: not imported, at Parent / Child / PBT" in note
+               for note in result["skipped"]), result["skipped"]
+    assert any("could not be identified" in note and "PBT" in note
+               for note in result["skipped"]), "where it was, and why it went"
+
+
+async def test_stopping_leaves_the_run_exactly_where_it_was(tmp_path):
+    """The other answer. Nothing was created before the question, so nothing
+    has to be undone after it."""
+    backend = Catalogue(unknown={CUT_NAME})
+    control, ask, _ = answering(False)
+    with pytest.raises(CamdsApiError, match="matched 0 entries"):
+        await TreeImporter(backend, tmp_path, control=control, ask=ask).run(
+            ImportRequest(cut_name_tree()))
+    assert not [call for call in backend.calls if call[0] == "create"]
+    assert not list(tmp_path.glob("*.jsonl")), "no journal for a run that never started"
+
+
+async def test_with_nobody_to_ask_the_run_stops_as_it_always_did(tmp_path):
+    """A question nobody can answer is not a reason to import wrong data."""
+    backend = Catalogue(unknown={CUT_NAME})
+    with pytest.raises(CamdsApiError):
+        await TreeImporter(backend, tmp_path).run(ImportRequest(cut_name_tree()))
+
+
+async def test_a_substance_whose_whole_name_does_not_match_still_stops_the_run(tmp_path):
+    """Nothing about it is unclear: the name is complete and CAMDS has no such
+    entry. There is no judgement for a person to make."""
+    root = fixture_tree()
+    root["children"][0]["children"][0]["children"][0]["cas_number"] = None
+    backend = Catalogue(unknown={"Iron"})
+    control, ask, asked = answering(True)
+    with pytest.raises(CamdsApiError):
+        await TreeImporter(backend, tmp_path, control=control, ask=ask).run(ImportRequest(root))
+    assert asked == [], "not a question anyone was asked"
+
+
+def test_where_a_skipped_material_was_is_reported_by_its_path():
+    """A tree with something missing from it and no word about what: the one
+    thing nobody can see by looking at what was imported."""
+    request = ImportRequest(cut_name_tree()).snapshot()
+    removed = request.without({"m2"})
+    assert removed == ["PBT: not imported, at Parent / Child / PBT"]
+    assert [m["uid"] for m in request.materials()] == ["m"]
+
+
+def test_a_parent_left_holding_nothing_goes_with_it():
+    """An empty Component describes nothing, and CAMDS refuses an empty
+    Semicomponent outright."""
+    root = cut_name_tree()
+    # A second branch, so emptying the first does not empty the whole import.
+    other = copy.deepcopy(root["children"][0])
+    for node, uid in ((other, "c3"), (other["children"][0], "m3"),
+                      (other["children"][0]["children"][0], "s3")):
+        node["uid"] = uid
+    other["name"] = "Other"
+    root["children"].append(other)
+    del other["children"][1]
+
+    request = ImportRequest(root).snapshot()
+    removed = request.without({"m", "m2"})
+    assert removed == ["Steel: not imported, at Parent / Child / Steel",
+                       "PBT: not imported, at Parent / Child / PBT",
+                       "Child: Component left with nothing in it, so it was not imported "
+                       "either, at Parent / Child"]
+    assert [child["name"] for child in request.root["children"]] == ["Other"]
+
+
+def test_skipping_everything_is_refused_rather_than_importing_an_empty_tree():
+    request = ImportRequest(fixture_tree()).snapshot()
+    with pytest.raises(ValueError, match="nothing to import"):
+        request.without({"m"})
+
+
+async def test_stop_is_answered_while_a_question_is_on_screen(tmp_path):
+    """The dialog is modal, so Stop cannot be reached through the buttons; the
+    run watches for it as it waits."""
+    import asyncio
+
+    from camds_imds_importer.camds.import_control import ImportStopped
+
+    control = ImportControl()
+    waiting = asyncio.ensure_future(control.ask("Skip them?", lambda text: None))
+    await asyncio.sleep(0.05)
+    assert control.question == "Skip them?", "the UI can see what is being asked"
+    control.stop()
+    with pytest.raises(ImportStopped):
+        await asyncio.wait_for(waiting, timeout=2)

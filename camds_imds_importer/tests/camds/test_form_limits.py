@@ -46,11 +46,24 @@ def test_a_number_longer_than_the_form_allows_is_reported_not_refused():
 
 
 def test_a_substance_without_a_cas_is_looked_up_by_its_full_name():
-    assert len(LONG_SUBSTANCE) > 50
+    # Longer than the search box takes, but the report printed the whole of it.
+    name = LONG_SUBSTANCE[:120]
+    assert 50 < len(name) < 132
+    root = tree()
+    root["children"][0]["children"] = [substance(cas_number=None, name=name)]
+    warnings = ImportRequest(root).validate()
+    assert any("search box accepts 50" in w for w in warnings), warnings
+
+
+def test_a_name_imds_itself_cut_short_is_reported_as_the_worse_problem():
+    """132 characters is IMDS's own cut, not a form's: the name the lookup has
+    to work with is not the substance's whole name."""
+    assert len(LONG_SUBSTANCE) == 132
     root = tree()
     root["children"][0]["children"] = [substance(cas_number=None, name=LONG_SUBSTANCE)]
     warnings = ImportRequest(root).validate()
-    assert any("search box accepts 50" in w for w in warnings), warnings
+    assert any("cut this name at 132 characters" in w for w in warnings), warnings
+    assert not any("search box accepts 50" in w for w in warnings),         "the length of the box is beside the point when the name itself is incomplete"
 
 
 def test_a_substance_with_neither_a_cas_nor_a_name_is_still_refused():

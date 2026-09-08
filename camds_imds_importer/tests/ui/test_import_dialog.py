@@ -120,3 +120,57 @@ def test_switching_branch_rebuilds_the_material_mapping():
     assert dialog.mapping_table.item(0, 0).text() == "Steel"
     assert dialog.mapping_table.item(0, 3).text() == ""
     dialog.close()
+
+
+def test_a_material_the_report_gave_no_class_can_be_classified_in_the_table():
+    """Two label-paper rows with an empty classification cell blocked an
+    otherwise clean 4293-node import. The class is a fact the operator knows,
+    so it is asked for rather than guessed."""
+    QApplication.instance() or QApplication([])
+    root = sound_tree(name="Paper for labels", classification=None)
+    dialog = ImportDialog(root)
+    assert not dialog.start.isEnabled()
+    assert "choose one in the Classification column" in dialog.preview.toPlainText()
+
+    choice = dialog.class_choice[0]
+    assert choice.currentData() is None, "nothing is chosen for the operator"
+    index = next(i for i in range(choice.count()) if choice.itemData(i) == "5.1.b")
+    choice.setCurrentIndex(index)
+
+    assert dialog.start.isEnabled(), "choosing a class unblocks the import"
+    assert dialog.request.materials()[0]["classification"] == "5.1.b"
+    text = dialog.preview.toPlainText()
+    assert "1 classification(s) chosen here" in text, "the operator's own decision is shown apart"
+    assert "Paper for labels" in text and "5.1.b" in text
+    dialog.close()
+
+
+def test_a_class_the_report_did_state_is_not_up_for_choosing():
+    """It is the supplier's statement about their own material."""
+    QApplication.instance() or QApplication([])
+    dialog = ImportDialog(sound_tree())
+    assert dialog.class_choice == {}
+    assert dialog.mapping_table.item(0, 1).text() == "1.1.1"
+    assert dialog.start.isEnabled()
+    dialog.close()
+
+
+def test_a_chooser_does_not_outlive_the_branch_it_was_made_for():
+    """Row 0 of another branch is another Material, and a class chosen for one
+    must not be applied to the other."""
+    QApplication.instance() or QApplication([])
+    def branch(uid, classification):
+        return {"uid": uid, "node_type": "COMPONENT", "name": "Branch " + uid, "weight_g": 1.0,
+                "quantity": 1,
+                "children": [{"uid": uid + "m", "node_type": "MATERIAL", "name": "Mat " + uid,
+                              "classification": classification, "weight_g": 1.0, "children": [
+                                  {"uid": uid + "s", "node_type": "SUBSTANCE", "name": "Iron",
+                                   "cas_number": "7439-89-6", "percentage": 100, "children": []}]}]}
+    root = {"uid": "r", "node_type": "COMPONENT", "name": "Root", "weight_g": 2.0, "quantity": 1,
+            "children": [branch("a", None), branch("b", "1.1.1")]}
+    dialog = ImportDialog(root)
+    index = next(i for i in range(dialog.subtree.count()) if dialog.subtree.itemData(i)["uid"] == "b")
+    dialog.subtree.setCurrentIndex(index)
+    assert dialog.class_choice == {}
+    assert dialog.mapping_table.cellWidget(0, 1) is None
+    dialog.close()

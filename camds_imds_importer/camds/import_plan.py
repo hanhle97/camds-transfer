@@ -10,7 +10,7 @@ import re
 from dataclasses import dataclass, field
 
 from .application_mapping import ApplicationMapping
-from .material_classifications import classification_code, known_codes
+from .material_classifications import describe, needs_choice
 
 
 CAS_PATTERN = re.compile(r"\d{2,7}-\d{2}-\d")
@@ -142,18 +142,50 @@ class ImportRequest:
     root: dict
     # Exact user-selected CAMDS ID/version per Material UID; never infer from IMDS ID.
     material_refs: dict[str, tuple[str, str]] = field(default_factory=dict)
+    # Classification the operator picked per Material UID, where IMDS printed
+    # none. CAMDS asks for one when creating a Material and the importer will
+    # not guess it, so without this the whole import stops for want of a class
+    # on two label-paper rows.
+    classifications: dict[str, str] = field(default_factory=dict)
     # Filled by snapshot(): repeated substances combined before any CAMDS work.
     merges: list[str] = field(default_factory=list)
     # Filled by validate(): accepted as declared, but the operator is told.
     warnings: list[str] = field(default_factory=list)
     # Filled by snapshot(): values IMDS left blank that were worked out here.
     derived: list[str] = field(default_factory=list)
+    # Filled by snapshot(): classifications the operator picked for this run.
+    chosen: list[str] = field(default_factory=list)
 
     def snapshot(self):
         clone = copy.deepcopy(self)
+        clone.chosen = clone._apply_classifications()
         clone.merges = clone._normalise()
         clone.derived = clone._derive_masses()
         return clone
+
+    def _apply_classifications(self) -> list[str]:
+        """Write the operator's classification onto the Materials that lacked one.
+
+        Only where the report gave nothing usable: a class IMDS did state is the
+        supplier's statement about their own material, and a stale choice must
+        not be able to overwrite it. Applied to the tree itself, so everything
+        downstream - the validation, the wizard, the run fingerprint - sees one
+        classification per Material and cannot disagree about where it came from.
+        """
+        notes: list[str] = []
+
+        def visit(node):
+            if node.get("node_type") == "MATERIAL":
+                code = self.classifications.get(node.get("uid"))
+                if code and needs_choice(node.get("classification")):
+                    node["classification"] = code
+                    notes.append(f"{node.get('name')}: IMDS printed no classification, "
+                                 f"so {code}{': ' + describe(code) if describe(code) else ''} was chosen")
+            for child in node.get("children", []):
+                visit(child)
+
+        visit(self.root)
+        return notes
 
     def _derive_masses(self) -> list[str]:
         """Fill in a Component mass IMDS left blank from what it contains.
@@ -302,10 +334,9 @@ class ImportRequest:
                         fail(f"{label}: exact CAMDS ID and version required")
                     return  # Existing Material composition is not overwritten.
                 raw = node.get("classification")
-                code = classification_code(raw)
-                if code not in known_codes():
-                    fail(f"{label}: classification {raw or 'missing'!r} was not seen in the CAMDS creation "
-                         "wizard; record it or map an existing CAMDS Material instead")
+                if needs_choice(raw):
+                    fail(f"{label}: classification {raw or 'missing'!r} - choose one in the "
+                         "Classification column, or map an existing CAMDS Material instead")
                     return
                 children = node.get("children", [])
                 if not children:

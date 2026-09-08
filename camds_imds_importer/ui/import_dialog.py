@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
 
 from ..camds.application_mapping import ApplicationMapping
 from ..camds.import_plan import ImportRequest
+from ..camds.material_classifications import describe, known_codes, needs_choice, sort_key
 
 
 def _candidates(root, depth=0):
@@ -36,7 +37,7 @@ class ImportDialog(QDialog):
         self.request = None
         self.mapping = ApplicationMapping()
         layout = QVBoxLayout(self)
-        intro = QLabel("Create and Save the parsed tree as CAMDS drafts. Leave both reference cells empty to create a new Material in its own classification, or enter an existing CAMDS ID and exact version. IMDS IDs are not CAMDS IDs. Save happens after every change; no Send/Submit.")
+        intro = QLabel("Create and Save the parsed tree as CAMDS drafts. Leave both reference cells empty to create a new Material in its own classification, or enter an existing CAMDS ID and exact version. IMDS IDs are not CAMDS IDs. Where the report printed no classification, choose one in the Classification column. Save happens after every change; no Send/Submit.")
         intro.setWordWrap(True)
         layout.addWidget(intro)
         # A report can carry one unsupported branch and many importable ones, so
@@ -53,6 +54,7 @@ class ImportDialog(QDialog):
         picker.addWidget(self.subtree, 1)
         layout.addLayout(picker)
         self.materials = []
+        self.class_choice: dict[int, QComboBox] = {}   # row -> chooser, where IMDS printed none
         self.mapping_table = QTableWidget(0, 5)
         self.mapping_table.setHorizontalHeaderLabels(["Parsed Material", "Classification", "Mass (g)", "Existing CAMDS ID", "Version"])
         layout.addWidget(self.mapping_table)
@@ -103,6 +105,11 @@ class ImportDialog(QDialog):
         self.root = node if node is not None else self.document_root
         self.materials = ImportRequest(self.root).materials()
         self.mapping_table.blockSignals(True)
+        self.class_choice = {}
+        # Rebuild from empty: shrinking the table would leave the choosers of
+        # the branch just left behind, attached to rows that now mean something
+        # else.
+        self.mapping_table.setRowCount(0)
         self.mapping_table.setRowCount(len(self.materials))
         for row, material in enumerate(self.materials):
             for col, value in enumerate((material["name"], material.get("classification") or "",
@@ -111,9 +118,36 @@ class ImportDialog(QDialog):
                 if col < 3:
                     item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.mapping_table.setItem(row, col, item)
+            if needs_choice(material.get("classification")):
+                self._offer_classification(row, material)
         self.mapping_table.blockSignals(False)
         self.mapping_table.resizeColumnsToContents()
         self.validate_plan()
+
+    def _offer_classification(self, row, material):
+        """Let the operator say what a Material is when the report did not.
+
+        Two label-paper rows with an empty classification cell stopped an
+        otherwise clean 4293-node import, and the only ways out were editing
+        the parsed data by hand or pointing the row at some existing CAMDS
+        Material it is not. The class is a fact about the material that the
+        operator knows and the report failed to print, so it is asked for here
+        rather than guessed during the run.
+        """
+        choice = QComboBox()
+        choice.addItem("choose a classification", None)
+        for code in sorted(known_codes(), key=sort_key):
+            text = f"{code}: {describe(code)}" if describe(code) else code
+            choice.addItem(text, code)
+        stated = material.get("classification")
+        choice.setToolTip(
+            f"The report printed {stated!r} for this Material, which is not a classification "
+            "CAMDS was seen to offer." if stated else
+            "The report printed no classification for this Material. CAMDS asks for one when "
+            "a Material is created, and the importer will not guess it.")
+        choice.currentIndexChanged.connect(self.validate_plan)
+        self.class_choice[row] = choice
+        self.mapping_table.setCellWidget(row, 1, choice)
 
     def invalidate(self, *_):
         self.request = None
@@ -125,7 +159,9 @@ class ImportDialog(QDialog):
             ref = tuple(self.mapping_table.item(row, col).text().strip() for col in (3, 4))
             if any(ref):
                 refs[node["uid"]] = ref
-        request = ImportRequest(self.root, refs).snapshot()
+        chosen = {self.materials[row]["uid"]: choice.currentData()
+                  for row, choice in self.class_choice.items() if choice.currentData()}
+        request = ImportRequest(self.root, refs, chosen).snapshot()
         try:
             warnings = request.validate(self.mapping)
         except (ValueError, TypeError) as exc:
@@ -141,6 +177,13 @@ class ImportDialog(QDialog):
             lines.extend("  " + note for note in request.merges[:20])
             if len(request.merges) > 20:
                 lines.append(f"  ... and {len(request.merges) - 20} more")
+        if request.chosen:
+            lines.append("")
+            # Somebody's decision, not the report's statement, so it is shown
+            # apart from everything the supplier declared.
+            lines.append(f"{len(request.chosen)} classification(s) chosen here, because IMDS "
+                         "printed none:")
+            lines.extend("  " + note for note in request.chosen)
         if request.derived:
             lines.append("")
             # A value the report did not state is the one thing here that is

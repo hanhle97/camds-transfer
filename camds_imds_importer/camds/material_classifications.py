@@ -55,6 +55,17 @@ def classification_code(value: str | None) -> str | None:
     return match.group(1) if match else None
 
 
+def needs_choice(value: str | None) -> bool:
+    """Whether the operator has to say what this Material is.
+
+    One rule, asked in three places: the preflight that blocks the import, the
+    table that offers the choice, and the snapshot that applies it. Two copies
+    of it would drift, and the drift would either offer a choice that changes
+    nothing or block on something already chosen.
+    """
+    return classification_code(value) not in known_codes()
+
+
 def require_supported(value: str | None) -> str:
     if not value or not str(value).strip():
         raise ValueError("Material classification is required")

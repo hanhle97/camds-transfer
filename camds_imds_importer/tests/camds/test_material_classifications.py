@@ -67,9 +67,9 @@ def test_preflight_now_accepts_a_report_classification_other_than_1_1_1():
 
 
 def test_preflight_still_blocks_a_classification_never_seen_in_the_wizard():
-    with pytest.raises(ValueError, match="was not seen in the CAMDS creation wizard"):
+    with pytest.raises(ValueError, match="choose one in the Classification column"):
         ImportRequest(material_tree("8.4: Invented")).validate()
-    with pytest.raises(ValueError, match="was not seen"):
+    with pytest.raises(ValueError, match="'missing'"):
         ImportRequest(material_tree(None)).validate()
 
 
@@ -81,4 +81,40 @@ def test_each_problem_is_reported_on_its_own_line():
     lines = str(info.value).splitlines()
     # A message containing its own punctuation must not be split into fragments.
     assert lines[0].startswith("Import blocked before CAMDS changes (")
-    assert sum("was not seen in the CAMDS creation wizard" in line for line in lines) == 2
+    assert sum("choose one in the Classification column" in line for line in lines) == 2
+
+
+def test_one_rule_decides_whether_a_class_has_to_be_chosen():
+    """The preflight, the table and the snapshot ask the same question."""
+    from camds_imds_importer.camds.material_classifications import needs_choice
+
+    assert needs_choice(None) and needs_choice("") and needs_choice("   ")
+    assert needs_choice("8.4"), "a code the wizard was never seen to offer"
+    assert needs_choice("paper"), "not a code at all"
+    assert not needs_choice("1.1.1")
+    assert not needs_choice("5.1.b: unfilled Thermoplastics")
+
+
+def test_a_chosen_classification_is_written_onto_the_material():
+    """What the operator picked has to reach the wizard, the validation and the
+    fingerprint as one classification, or they would disagree about it."""
+    plain = ImportRequest(material_tree(None))
+    chosen = ImportRequest(material_tree(None), {}, {"m": "5.1.b"}).snapshot()
+    chosen.validate()
+    assert chosen.materials()[0]["classification"] == "5.1.b"
+    assert chosen.chosen == ["Steel: IMDS printed no classification, "
+                            "so 5.1.b: unfilled Thermoplastics was chosen"]
+    assert chosen.fingerprint != plain.snapshot().fingerprint, "a different run"
+
+
+def test_a_choice_cannot_overwrite_a_classification_the_report_stated():
+    """It is the supplier's statement about their own material."""
+    request = ImportRequest(material_tree("7.2: Ceramics / glass"), {}, {"m": "5.1.b"}).snapshot()
+    assert request.materials()[0]["classification"] == "7.2: Ceramics / glass"
+    assert request.chosen == []
+
+
+def test_a_chosen_classification_is_checked_like_any_other():
+    """The table only offers recorded codes; the rule still lives in one place."""
+    with pytest.raises(ValueError, match="choose one in the Classification column"):
+        ImportRequest(material_tree(None), {}, {"m": "8.4"}).snapshot().validate()

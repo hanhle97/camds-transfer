@@ -449,3 +449,81 @@ async def test_stop_is_answered_while_a_question_is_on_screen(tmp_path):
     control.stop()
     with pytest.raises(ImportStopped):
         await asyncio.wait_for(waiting, timeout=2)
+
+
+class Numbered(FakeDraftBrowser):
+    """A CAMDS that answers a Component search by number."""
+
+    def __init__(self, held=None, **kw):
+        super().__init__(**kw)
+        self.held = held or {}          # part number -> (mds id, version)
+        self.attached = {}              # name in the tree -> what is attached there
+        self.asked = []
+
+    async def find_component_by_number(self, node):
+        self.asked.append(node.get("part_number"))
+        return self.held.get(str(node.get("part_number") or ""))
+
+    async def add_component_reference(self, parent_path, child, ref, at=(0, 1)):
+        self.calls.append(("attach", child["uid"], tuple(ref)))
+        self.attached[child["name"]] = tuple(ref)
+        return child["name"]
+
+    async def select(self, path, at=(0, 1)):
+        # As CAMDS does: selecting an attached node shows that MDS's identity.
+        await super().select(path, at)
+        if path[-1] in self.attached:
+            self.current_ref = self.attached[path[-1]]
+
+
+def two_level_tree():
+    """A sub-assembly with a Material inside it, under a parent Component."""
+    substance = {"uid": "s", "node_type": "SUBSTANCE", "name": "Iron",
+                 "cas_number": "7439-89-6", "percentage": 100, "children": []}
+    material = {"uid": "m", "node_type": "MATERIAL", "name": "Steel", "classification": "1.1.1",
+                "weight_g": 5, "children": [substance]}
+    inner = {"uid": "c", "node_type": "COMPONENT", "name": "Bracket", "part_number": "1234567890",
+             "weight_g": 5, "quantity": 1, "children": [material]}
+    return {"uid": "r", "node_type": "COMPONENT", "name": "Parent", "part_number": "9999999999",
+            "weight_g": 5, "children": [inner]}
+
+
+async def test_a_component_already_in_camds_is_attached_and_not_built(tmp_path):
+    """The point of the mode: a sub-assembly CAMDS already holds costs one
+    reference, not the Materials inside it."""
+    backend = Numbered({"1234567890": ("CA_5_777", "3")})
+    result = await TreeImporter(backend, tmp_path).run(
+        ImportRequest(two_level_tree()), components="number")
+
+    assert ("attach", "c", ("CA_5_777", "3")) in backend.calls
+    assert not [call for call in backend.calls if call[0] == "create" and call[1] == "m"], \
+        "nothing inside it was created"
+    assert not [call for call in backend.calls if call[0] == "child"], "nor the Component itself"
+    assert any("attached CA_5_777/3" in note and "1234567890" in note
+               for note in result["skipped"]), result["skipped"]
+
+
+async def test_the_root_is_built_even_when_its_number_is_in_camds(tmp_path):
+    """Attaching the root to itself would import nothing at all."""
+    backend = Numbered({"9999999999": ("CA_5_1", "1"), "1234567890": ("CA_5_777", "3")})
+    await TreeImporter(backend, tmp_path).run(ImportRequest(two_level_tree()),
+                                              components="number")
+    assert ("create", "r") in backend.calls
+    assert "9999999999" not in backend.asked
+
+
+async def test_a_number_camds_does_not_hold_is_built_as_usual(tmp_path):
+    backend = Numbered({})
+    await TreeImporter(backend, tmp_path).run(ImportRequest(two_level_tree()),
+                                              components="number")
+    assert ("create", "m") in backend.calls
+    assert ("child", "c") in backend.calls
+
+
+async def test_the_mode_is_off_unless_it_is_asked_for(tmp_path):
+    """The strict rule stays the default: the number alone is a looser identity
+    than the contents, and choosing it is the operator's call."""
+    backend = Numbered({"1234567890": ("CA_5_777", "3")})
+    await TreeImporter(backend, tmp_path).run(ImportRequest(two_level_tree()))
+    assert backend.asked == [], "not asked at all"
+    assert ("create", "m") in backend.calls

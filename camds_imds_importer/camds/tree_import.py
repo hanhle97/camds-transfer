@@ -381,6 +381,10 @@ class DraftBrowser:
         """Searching before building needs the JSON API backend."""
         return None
 
+    async def find_component_by_number(self, node):
+        """Searching before building needs the JSON API backend."""
+        return None
+
     async def add_component_reference(self, parent_path, child, ref, at=(0, 1)):
         raise RuntimeError("Attaching an existing Component needs the JSON API backend")
 
@@ -563,6 +567,45 @@ class TreeImporter:
                    camds_value=str(resolution.value), camds_label=chosen["label"],
                    source=resolution.source)
 
+    async def _match_by_number(self, request) -> dict:
+        """Attach the Components CAMDS already holds under their Part No.
+
+        Asked of the report rather than of what this run built, so it happens
+        before anything is created and the whole inside of a matched Component
+        is never made at all - which is the point of the mode: a 4293-node
+        report whose sub-assemblies are already in CAMDS becomes a handful of
+        references instead of hundreds of Materials.
+
+        The children are taken out of the tree once their parent is matched, so
+        every count that follows - the plan, the paths, the read-back - is of
+        what this run will really do. The node itself stays: it is what carries
+        the mass and quantity the reference is attached with.
+
+        Top down, and a matched Component is not descended into: what is inside
+        it is that MDS's business, not this import's.
+        """
+        find = getattr(self.io, "find_component_by_number", None)
+        if find is None:
+            return {}
+        matched: dict[str, tuple] = {}
+
+        async def visit(node):
+            for child in list(node.get("children") or []):
+                if child.get("node_type") != "COMPONENT":
+                    continue
+                found = await find(child)
+                if found:
+                    matched[child["uid"]] = tuple(found)
+                    self.reused.append(
+                        f"{child['name']}: attached {'/'.join(found)}, already in CAMDS under "
+                        f"number {child.get('part_number')}; nothing inside it was created")
+                    child["children"] = []
+                else:
+                    await visit(child)
+
+        await visit(request.root)
+        return matched
+
     async def _settle_cut_names(self, request) -> list[str]:
         """Look up the substances whose names IMDS cut short, and ask about them.
 
@@ -621,13 +664,20 @@ class TreeImporter:
             + str(answer_in.path if answer_in else "the substance mapping file") + " first?")
 
     async def run(self, request: ImportRequest, resume: bool = False, reuse: bool = True,
-                  release: bool = False):
+                  release: bool = False, components: str = "contents"):
         """Import the tree.
 
         `reuse` searches CAMDS for a Material before making another one; off,
         everything in the report is created afresh. `release` publishes each
         Material this run created, which is outward-facing and not reversible
         from here, so it is off unless the operator asks for it.
+
+        `components` says what makes a Component in CAMDS the one this node is.
+        "contents" - the default - is the strict rule: same Part No., same
+        number of children, every child the MDS this run resolved for it, which
+        can only be asked once the subtree below has been built. "number" takes
+        the Part No. alone, before anything is built, and attaches what CAMDS
+        holds under it without building any of the inside.
         """
         request = request.snapshot()
         self.skipped = []
@@ -639,6 +689,9 @@ class TreeImporter:
         # Asked before anything is created, so a Material left out is left out
         # whole and the step count is the one the run will actually perform.
         self.skipped += await self._settle_cut_names(request)
+        # Before the plan, because a Component attached whole is a Component
+        # whose Materials this run never makes: they are not steps it will do.
+        by_number = await self._match_by_number(request) if components == "number" else {}
         plan = request.plan()
         journal, state = self._open_journal(request, resume, await self.io.can_reenter_saved())
         reporter = Reporter(len(plan), self.progress)
@@ -776,8 +829,8 @@ class TreeImporter:
                 # Which Components CAMDS already holds. Depth first: a parent
                 # is compared on what its children resolved to, so the children
                 # must be settled before it can be asked about.
-                matched: dict[str, tuple] = {}
-                if reuse:
+                matched: dict[str, tuple] = dict(by_number)
+                if reuse and components != "number":
                     resolved = {uid: ref[0] for uid, ref in refs.items()}
 
                     async def match(node):

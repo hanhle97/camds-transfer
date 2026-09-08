@@ -71,6 +71,18 @@ class ImportDialog(QDialog):
             "\"Ep-Ni\" - so the composition decides. Unchecked, every Material in the "
             "report is created afresh.")
         layout.addWidget(self.reuse)
+        self.by_number = QCheckBox(
+            "Attach any Component already in CAMDS with the same Component number, "
+            "without building what is inside it")
+        self.by_number.setChecked(False)
+        self.by_number.setToolTip(
+            "The number is taken as the identity: what the report says the part contains is "
+            "not compared with what CAMDS says it contains, and nothing inside a matched "
+            "Component is created - its Materials are never made. Right when CAMDS is already "
+            "the authority on that part; wrong if the report describes something the number no "
+            "longer means. Unchecked, a Component is reused only when its Part No., its number "
+            "of children and every child's MDS all agree.")
+        layout.addWidget(self.by_number)
         self.release = QCheckBox(
             "Release each Material this run creates (publishes it in CAMDS)")
         self.release.setChecked(False)

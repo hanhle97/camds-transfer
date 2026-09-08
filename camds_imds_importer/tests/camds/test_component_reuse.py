@@ -118,3 +118,44 @@ def test_a_matched_subtree_is_attached_and_not_walked_into():
         "paths must stop at an attached subtree"
     assert "add_component_reference" in body
     assert "expected the Component " in body, "read-back checks identity, and says so"
+
+
+# --------------------------------------------------------- by number alone
+
+async def test_the_number_alone_can_identify_a_component_when_asked_for():
+    """The looser rule, and a mode of its own: what CAMDS holds under the
+    number is taken as the part, whatever the report says is inside it."""
+    camds = Camds(rows=[{"mdsId": "CA_5_9", "symbol": "P1", "version": "2"}], trees={})
+    assert await backend(camds).find_component_by_number(component()) == ("CA_5_9", "2")
+    assert not any(name == "loadMdsTree" for name, _p, _d in camds.asked),         "the contents are not looked at, which is the whole difference"
+
+
+async def test_a_draft_is_not_a_component_anyone_can_attach():
+    """0.01 is something somebody left half-built."""
+    camds = Camds(rows=[{"mdsId": "CA_5_draft", "symbol": "P1", "version": "0.01"}], trees={})
+    assert await backend(camds).find_component_by_number(component()) is None
+
+
+async def test_the_highest_released_version_is_the_one_attached():
+    camds = Camds(rows=[{"mdsId": "CA_5_old", "symbol": "P1", "version": "1"},
+                        {"mdsId": "CA_5_new", "symbol": "P1", "version": "3"}], trees={})
+    assert await backend(camds).find_component_by_number(component()) == ("CA_5_new", "3")
+
+
+async def test_several_components_under_one_number_are_reported_not_chosen_quietly():
+    camds = Camds(rows=[{"mdsId": "CA_5_a", "symbol": "P1", "version": "1"},
+                        {"mdsId": "CA_5_b", "symbol": "P1", "version": "2"}], trees={})
+    made = backend(camds)
+    assert await made.find_component_by_number(component()) == ("CA_5_b", "2")
+    assert any("2 Components in CAMDS carry the number P1" in note for note in made.findings)
+
+
+async def test_a_row_whose_number_merely_contains_the_search_is_not_the_part():
+    camds = Camds(rows=[{"mdsId": "CA_5_9", "symbol": "P100", "version": "2"}], trees={})
+    assert await backend(camds).find_component_by_number(component()) is None
+
+
+async def test_a_component_with_no_number_is_not_looked_up_by_one():
+    camds = Camds(rows=[], trees={})
+    assert await backend(camds).find_component_by_number(component(number=None)) is None
+    assert camds.asked == []

@@ -303,15 +303,7 @@ class ApiBackend:
                 return None  # a child this run has not resolved cannot be compared
             wanted.append(str(mds))
 
-        rows = await self.api.find_component(symbol=number)
-        released = []
-        for row in rows:
-            if str(row.get("symbol") or "").strip() != number:
-                continue
-            version = str(row.get("version") or "").strip()
-            if version.isdigit() and row.get("mdsId"):
-                released.append((int(version), str(row["mdsId"])))
-        for version, mds_id in sorted(released, reverse=True):
+        for version, mds_id in await self._released_components(number):
             tree = await self.api.load_tree(mds_id)
             children = tree.get("children") or []
             if len(children) != len(wanted):
@@ -319,6 +311,51 @@ class ApiBackend:
             if all(str(c.get("mdsId")) == expect for c, expect in zip(children, wanted)):
                 return mds_id, str(version)
         return None
+
+    async def _released_components(self, number) -> list[tuple[int, str]]:
+        """What CAMDS holds under this Component number, newest release first.
+
+        Only whole-numbered versions. 0.01 is a draft somebody left half-built,
+        and attaching one would put an unfinished MDS into a tree as though it
+        were a published part.
+        """
+        found = []
+        for row in await self.api.find_component(symbol=number):
+            if str(row.get("symbol") or "").strip() != number:
+                continue
+            version = str(row.get("version") or "").strip()
+            if version.isdigit() and row.get("mdsId"):
+                found.append((int(version), str(row["mdsId"])))
+        return sorted(set(found), reverse=True)
+
+    async def find_component_by_number(self, node) -> tuple[str, str] | None:
+        """The Component CAMDS holds under this node's number, whatever is in it.
+
+        The looser of the two ways to reuse a Component, and a deliberate
+        choice: the number is taken as the identity, and what the report says
+        the part contains is not compared with what CAMDS says it contains.
+        That is right when CAMDS is already the authority on the part - it was
+        declared there once and the report is a copy of it - and wrong when the
+        report describes something the number no longer means. Which of those
+        is true is the operator's to know, so this runs only when they ask for
+        it.
+
+        The highest released version. Several distinct MDSs can share a number,
+        and then the choice is reported rather than made quietly.
+        """
+        number = str(node.get("part_number") or "").strip()
+        if not number:
+            return None
+        released = await self._released_components(number)
+        if not released:
+            return None
+        version, mds_id = released[0]
+        distinct = {mds for _, mds in released}
+        if len(distinct) > 1:
+            self.findings.append(
+                f"{node.get('name')}: {len(distinct)} Components in CAMDS carry the number "
+                f"{number}; version {version} ({mds_id}) was attached, the highest released one")
+        return mds_id, str(version)
 
     async def add_component_reference(self, parent_path, child, ref, at=(0, 1)) -> str:
         """Attach a Component that already exists, rather than building it again.

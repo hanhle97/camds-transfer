@@ -136,7 +136,7 @@ async def browser_page():
 async def test_add_semicomponent_fills_the_recorded_fields(browser_page):
     await browser_page.set_content(EDITOR)
     draft = DraftBrowser(CamdsOperations(browser_page))
-    draft.select = lambda path, at=(0, 1): _noop()
+    draft.select = lambda path, at=(0, 1), complete=True: _noop()
     draft.settled = _noop
     await draft.add_semicomponent(["Label"], semicomponent([], mass=0.995))
     panel = browser_page.get_by_role("tabpanel", name="Details", exact=True)
@@ -149,7 +149,7 @@ async def test_add_semicomponent_stops_if_the_mass_unit_is_not_grams(browser_pag
     await browser_page.set_content(EDITOR.replace('<button id="unit">g</button>',
                                                   '<button id="unit">kg</button>'))
     draft = DraftBrowser(CamdsOperations(browser_page))
-    draft.select = lambda path, at=(0, 1): _noop()
+    draft.select = lambda path, at=(0, 1), complete=True: _noop()
     draft.settled = _noop
     with pytest.raises(Exception):
         await draft.add_semicomponent(["Label"], semicomponent([], mass=0.995))

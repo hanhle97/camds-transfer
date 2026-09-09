@@ -121,10 +121,28 @@ class ApiBackend:
     def _remember(self, path: tuple, struts_id: str) -> None:
         self._paths.setdefault(tuple(path), []).append(struts_id)
 
-    def _resolve(self, path, at=(0, 1)) -> str:
+    def _resolve(self, path, at=(0, 1), complete=True) -> str:
+        """Address the occurrence-th node on a path CAMDS may repeat.
+
+        `total` counts what the finished tree holds. That is only present once
+        the tree is finished, so while it is still being built the count is
+        checked as a bound rather than an equality: the node being addressed
+        must exist, and no more than the tree can ever hold may be there.
+
+        Demanding equality during the build failed on the first parent whose
+        children repeat a name. Children are added depth-first in document
+        order, so the importer descends into the first "Terminal" before the
+        second one exists, and a path that will eventually hold two nodes holds
+        one at that moment. Live run 2026-09-08: 1h38m of saved work stopped at
+        step 528 of 1667 on exactly that.
+        """
         occurrence, total = at
         found = self._paths.get(tuple(path), [])
-        if len(found) != total or occurrence >= len(found):
+        if occurrence >= len(found):
+            raise CamdsApiError(
+                f"{' / '.join(path)}: expected at least {occurrence + 1} node(s), "
+                f"CAMDS has {len(found)}")
+        if len(found) > total or (complete and len(found) != total):
             raise CamdsApiError(
                 f"{' / '.join(path)}: expected {total} node(s), CAMDS has {len(found)}")
         return found[occurrence]
@@ -366,7 +384,7 @@ class ApiBackend:
         That the call was only ever recorded attaching a Material is the part
         of this that is inference rather than evidence.
         """
-        parent = self._resolve(parent_path, at)
+        parent = self._resolve(parent_path, at, complete=False)
         attached = await self.api.attach_mds(
             root_struts_id=self.root.struts_id, root_mds=self.root.mds_id, mds_id=ref[0],
             parent_struts_id=parent, index=self._next_index(parent))
@@ -449,7 +467,7 @@ class ApiBackend:
         return children[index]
 
     async def add_component(self, parent_path, child, at=(0, 1), reuse_index=None) -> None:
-        parent = self._resolve(parent_path, at)
+        parent = self._resolve(parent_path, at, complete=False)
         struts_id = self._reuse(parent, reuse_index)
         if struts_id is None:
             created = await self.api.add_component(
@@ -468,7 +486,7 @@ class ApiBackend:
                                 reuse_index=None) -> None:
         """Insert a Semicomponent, declared by mass or - inside another
         Semicomponent - by portion, which is how the report declares it."""
-        parent = self._resolve(parent_path, at)
+        parent = self._resolve(parent_path, at, complete=False)
         struts_id = self._reuse(parent, reuse_index)
         if struts_id is None:
             created = await self.api.add_semicomponent(
@@ -486,7 +504,7 @@ class ApiBackend:
 
     async def add_material(self, parent_path, node, ref, at=(0, 1), by_portion=False,
                            reuse_index=None) -> str:
-        parent = self._resolve(parent_path, at)
+        parent = self._resolve(parent_path, at, complete=False)
         struts_id = self._reuse(parent, reuse_index)
         if struts_id is None:
             attached = await self.api.attach_mds(
@@ -730,7 +748,7 @@ class ApiBackend:
         is what keeps it from adding a second copy of something that a failure
         interrupted after the write but before the journal entry.
         """
-        parent = self._resolve(path, at) if path else self.current
+        parent = self._resolve(path, at, complete=False) if path else self.current
         return [{"name": self._text.get(child, ""), "cas": self._cas.get(child),
                  "mds": self._mds.get(child)}
                 for child in self._children.get(parent, [])]

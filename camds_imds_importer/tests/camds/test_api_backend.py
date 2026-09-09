@@ -696,3 +696,80 @@ def test_both_backends_format_numbers_the_same_way():
 
     assert api_backend.number is api.number
     assert tree_import.number is api.number
+
+
+# --------------------------------- repeated sibling names, mid-build
+
+async def test_repeated_siblings_that_have_children_of_their_own_import(tmp_path):
+    """The shape that stopped the live run of 2026-09-08 after 1h38m.
+
+    "Rubber sleeve" carries two Components both named "Terminal", and each
+    holds a "Body". Children are added depth-first in document order, so the
+    importer descends into the first "Terminal" to add its "Body" while the
+    second "Terminal" does not exist yet. Resolving the parent against the
+    count the finished tree will hold rejected that as
+    "expected 2 node(s), CAMDS has 1", with 528 of 1667 steps saved and no
+    rollback.
+    """
+    def terminal(uid):
+        # Every node needs its own UID, substances included.
+        steel = material(uid="m" + uid, children=[substance(uid="s" + uid)])
+        body = {"uid": "b" + uid, "node_type": "COMPONENT", "name": "Body",
+                "part_number": "B1", "weight_g": 1.0, "quantity": 1,
+                "children": [steel]}
+        return {"uid": uid, "node_type": "COMPONENT", "name": "Terminal",
+                "part_number": "T1", "weight_g": 2.0, "quantity": 1, "children": [body]}
+
+    sleeve = {"uid": "sleeve", "node_type": "COMPONENT", "name": "Rubber sleeve",
+              "part_number": "RS1", "weight_g": 4.0, "quantity": 1,
+              "children": [terminal("t1"), terminal("t2")]}
+    root = {"uid": "r", "node_type": "COMPONENT", "name": "EL Control Unit",
+            "part_number": "P1", "weight_g": 8.0, "children": [sleeve]}
+
+    camds = FakeCamds()
+    result = await TreeImporter(backend(camds), tmp_path).run(ImportRequest(root))
+
+    assert result["nodes"] == result["total"]
+    names = [n["data"].get("cname") for n in camds.nodes.values()]
+    assert names.count("Terminal") == 2
+    assert names.count("Body") == 2
+
+
+async def test_a_node_the_tree_can_never_hold_is_still_refused(tmp_path):
+    """Relaxing the build-time count must not accept a tree with too many.
+
+    While building, the count is a bound rather than an equality; more nodes on
+    a path than the report describes still means the importer is looking at
+    something it did not create.
+    """
+    camds = FakeCamds()
+    io = backend(camds)
+    io._paths[("Board", "Resistor")] = ["a", "b", "c"]
+
+    with pytest.raises(CamdsApiError) as caught:
+        io._resolve(("Board", "Resistor"), at=(0, 2), complete=False)
+
+    assert "expected 2 node(s), CAMDS has 3" in str(caught.value)
+
+
+async def test_addressing_a_node_that_is_not_there_yet_says_which_one(tmp_path):
+    camds = FakeCamds()
+    io = backend(camds)
+    io._paths[("Board", "Resistor")] = ["a"]
+
+    with pytest.raises(CamdsApiError) as caught:
+        io._resolve(("Board", "Resistor"), at=(1, 3), complete=False)
+
+    assert "expected at least 2 node(s), CAMDS has 1" in str(caught.value)
+
+
+async def test_read_back_still_demands_the_whole_tree(tmp_path):
+    """Verification runs on a finished tree, where the exact count is the point."""
+    camds = FakeCamds()
+    io = backend(camds)
+    io._paths[("Board", "Resistor")] = ["a"]
+
+    with pytest.raises(CamdsApiError) as caught:
+        io._resolve(("Board", "Resistor"), at=(0, 3))
+
+    assert "expected 3 node(s), CAMDS has 1" in str(caught.value)

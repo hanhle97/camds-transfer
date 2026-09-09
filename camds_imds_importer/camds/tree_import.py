@@ -181,19 +181,31 @@ class DraftBrowser:
     def tree_selector(path):
         return ' > ul > '.join('li[treenode]:has(> a > .node_name:text-is(' + json.dumps(name) + '))' for name in path)
 
-    async def tree_node(self, path, at=(0, 1)):
+    async def tree_node(self, path, at=(0, 1), complete=True):
         # One compound selector avoids :scope/:has scoping ambiguity in chained locators.
         # Repeated names are legitimate (a board really does carry 30 parts named
         # "Resistor"), so the path is resolved to the expected number of matches
         # and addressed by document order, which is the order they were added.
+        # `total` is what the finished tree holds, which is only on the page once
+        # the tree is finished. While it is still being built the count is a
+        # bound instead: children are added depth-first, so the importer descends
+        # into the first "Resistor" long before the last one is on the page.
         occurrence, total = at
         node = self.page.locator(self.tree_selector(path))
-        await expect(node).to_have_count(total)
+        if complete:
+            await expect(node).to_have_count(total)
+        else:
+            await expect(node.nth(occurrence)).to_be_attached()
+            shown = await node.count()
+            if shown > total:
+                raise RuntimeError(
+                    f"{' / '.join(path)}: expected at most {total} node(s), "
+                    f"CAMDS shows {shown}")
         return node.nth(occurrence)
 
-    async def select(self, path, at=(0, 1)):
+    async def select(self, path, at=(0, 1), complete=True):
         occurrence, total = at
-        await self.tree_node(path, at)
+        await self.tree_node(path, at, complete)
         await self.page.locator(self.tree_selector(path) + ' > a > .node_name').nth(occurrence).click()
         await self.settled()
         await expect(self.page.locator(self.tree_selector(path) + ' > a').nth(occurrence)).to_have_class(re.compile(r"curSelectedNode"))
@@ -209,7 +221,7 @@ class DraftBrowser:
         if reuse_index is not None:
             raise RuntimeError("Filling a node an interrupted run left behind needs the JSON API backend")
 
-        await self.select(parent_path, at)
+        await self.select(parent_path, at, complete=False)
         await self.page.locator('img[title="Add Component"]').click()
         await self.settled()
         await expect(form_item(self.details(), "Quantity")).to_be_visible()
@@ -238,7 +250,7 @@ class DraftBrowser:
                 f"{child['name']}: a Semicomponent inside a Semicomponent is declared by "
                 "portion, and no browser control for that has been discovered. Import over "
                 "the API instead.")
-        await self.select(parent_path, at)
+        await self.select(parent_path, at, complete=False)
         await self.page.locator('img[title="Add SemiComponent"]').click()
         await self.settled()
         await expect(form_item(self.details(), "Type")).to_contain_text("Semicomponent", timeout=60_000)
@@ -280,7 +292,7 @@ class DraftBrowser:
         under a Component carries a Mass in grams, the same Material under a
         Semicomponent carries a Proportion.
         """
-        await self.select(parent_path, at)
+        await self.select(parent_path, at, complete=False)
         await self.lookup_dialog("Add Metarial", "ID:", ref[0], "/".join(ref), ref[1])
         if await self.identity() != tuple(ref):
             raise RuntimeError("Attached Material ID/version mismatch")

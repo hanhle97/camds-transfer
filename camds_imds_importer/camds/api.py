@@ -148,6 +148,27 @@ RETRYABLE = frozenset({
 # A GET path carries its id, so it is matched by prefix.
 RETRYABLE_PREFIXES = ("/api/mds/tree/getMdsStatus/", "/api/mds/tree/getMaterialStatus/")
 
+# CAMDS's own words for a fault at its end: "program exception, please retry;
+# if it keeps happening, contact the administrator". It arrives as a perfectly
+# ordinary HTTP 200, so nothing about the response says "transient" except this
+# sentence - and the sentence asks to be retried.
+GENERIC_REFUSAL = "程序异常"
+
+# Where that refusal is worth taking at its word. Reads only: asking again
+# cannot change anything, whatever CAMDS was doing when it failed. A write is
+# different - a refusal there means CAMDS considered the request and rejected
+# it, and sending it again would either be refused for the same reason or, if
+# the refusal was not what it appeared, apply the change twice.
+REREADABLE = frozenset({
+    "/api/mds/tree/loadNodeDate", "/api/mds/tree/loadMdsTree",
+    "/api/mds/tree/canbeModifyMx", "/api/mds/tree/isStandMaterial",
+    "/api/mds/tree/getApplyList", "/api/mds/tree/getApplyAppstd",
+    "/api/common/substance/findSubstanceByCondition",
+    "/api/mds/findMds/findMaterialByCondition",
+    "/api/mds/findMds/findComponentByCondition",
+    "/api/dataTransform/materialClassification/getMaterialClassificationList",
+})
+
 # Only a transport failure is transient. A TypeError from a wrong call is a
 # defect, and retrying it would hide it behind three slow attempts.
 try:  # pragma: no cover - exercised whenever Playwright is installed
@@ -166,6 +187,11 @@ REQUEST_TIMEOUT_MS = 60_000
 
 def retryable(path: str) -> bool:
     return path in RETRYABLE or path.startswith(RETRYABLE_PREFIXES)
+
+
+def rereadable(path: str) -> bool:
+    """Whether a fault CAMDS reports on this path is worth asking again."""
+    return path in REREADABLE or path.startswith(RETRYABLE_PREFIXES)
 
 
 def number(value) -> str:
@@ -318,6 +344,13 @@ class CamdsApi:
         A six-hour import died on a single 30-second timeout with 1304 of 1536
         Materials already written. One slow moment is not a reason to stop, so
         a call that can safely be repeated is repeated - and only those.
+
+        Not answering is not the only way CAMDS has a bad moment. It also
+        answers HTTP 200 carrying "程序异常，请重试" - a fault at its end, with
+        a request to try again. A resumed run of 2026-09-09 read 188 Materials
+        back and then met one of those on a plain read, and stopped after an
+        hour with nothing wrong at this end. On a read, CAMDS is taken at its
+        word.
         """
         url = self.base_url + path
         for attempt in range(1, ATTEMPTS if retryable(path) else 1):
@@ -327,9 +360,15 @@ class CamdsApi:
                 # A timeout or a dropped connection; CAMDS never answered.
                 self._retrying(path, attempt, str(exc).splitlines()[0])
             else:
-                if response.status not in TRANSIENT_STATUS:
-                    return await self._unwrap(url, response)
-                self._retrying(path, attempt, f"HTTP {response.status}")
+                if response.status in TRANSIENT_STATUS:
+                    self._retrying(path, attempt, f"HTTP {response.status}")
+                else:
+                    try:
+                        return await self._unwrap(url, response)
+                    except CamdsApiError as exc:
+                        if not (rereadable(path) and GENERIC_REFUSAL in str(exc)):
+                            raise
+                        self._retrying(path, attempt, GENERIC_REFUSAL)
             await asyncio.sleep(BACKOFF_SECONDS * attempt)
         # The last attempt speaks for itself: whatever CAMDS answers now is the
         # answer, and its own words are more use than a count of tries.

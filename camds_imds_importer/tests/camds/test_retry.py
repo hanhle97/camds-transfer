@@ -6,6 +6,11 @@ be sent again is not a detail. A timeout on an allocating call is ambiguous:
 CAMDS may have created the node and lost the answer, so repeating it risks a
 second Material or a duplicated substance. Those fail, and resume reconciles
 against what CAMDS actually holds.
+
+Not answering is not the only bad moment CAMDS has. It also answers HTTP 200
+carrying "程序异常，请重试" - a fault at its end, with a request to try again.
+That is separated here from a refusal that is a decision: the first is retried
+on a read, the second stands wherever it arrives.
 """
 import asyncio
 
@@ -104,15 +109,6 @@ async def test_a_gateway_hiccup_is_retried_but_a_refusal_is_not():
     assert refused.attempts == 1, "a refusal is an answer, not a hiccup"
 
 
-async def test_camds_refusing_the_operation_is_never_retried():
-    """respCode says no. Asking again would just be told no four times."""
-    refusal = Flaky(failures=0, body={"respCode": "1", "ok": False, "message": "程序异常"})
-    api = CamdsApi(refusal, base_url="https://camds.test")
-    with pytest.raises(CamdsApiError, match="程序异常"):
-        await api.load_tree("CA_5_1")
-    assert refusal.attempts == 1
-
-
 async def test_a_defect_in_our_own_call_is_not_hidden_behind_retries():
     """A TypeError is a bug; three slow attempts would only obscure it."""
     class Wrong:
@@ -129,3 +125,83 @@ async def test_retries_are_reported_so_a_failing_session_is_visible():
     api = CamdsApi(flaky, base_url="https://camds.test", on_retry=said.append)
     await api.load_tree("CA_5_1")
     assert said and "loadMdsTree" in said[0] and "retry 1" in said[0]
+
+
+REFUSAL = "程序异常，请重试。如果重复出现请联系管理员处理！"
+
+
+class Faulty:
+    """Answers HTTP 200 carrying CAMDS's own "something went wrong, retry"."""
+
+    def __init__(self, refusals):
+        self.refusals = refusals
+        self.attempts = 0
+
+    async def _call(self, url, **kw):
+        self.attempts += 1
+        refused = self.attempts <= self.refusals
+        body = ({"respCode": "1", "ok": False, "message": REFUSAL} if refused
+                else {"respCode": "0", "ok": True, "data": {"id": "x"}})
+
+        class Response:
+            status = 200
+
+            @staticmethod
+            async def json():
+                return body
+        return Response
+
+    post = _call
+    get = _call
+
+
+async def test_a_read_camds_says_to_retry_is_retried():
+    """It arrives as an ordinary HTTP 200. Nothing marks it as transient except
+    CAMDS's own sentence, which asks for exactly this. A resumed run had read
+    188 Materials back and stopped on one of these."""
+    faulty = Faulty(refusals=2)
+    api = CamdsApi(faulty, base_url="https://camds.test")
+    assert await api.load_tree("CA_5_1") == {"id": "x"}
+    assert faulty.attempts == 3
+    assert api.retries == 2
+
+
+async def test_a_read_that_keeps_being_refused_reports_what_camds_said():
+    faulty = Faulty(refusals=ATTEMPTS)
+    with pytest.raises(CamdsApiError, match="程序异常"):
+        await CamdsApi(faulty, base_url="https://camds.test").load_tree("CA_5_1")
+    assert faulty.attempts == ATTEMPTS
+
+
+async def test_a_write_camds_refuses_is_not_sent_again():
+    """A refusal on a write is CAMDS considering the request and rejecting it.
+    Sending it again either earns the same refusal or applies the change twice."""
+    faulty = Faulty(refusals=1)
+    api = CamdsApi(faulty, base_url="https://camds.test")
+    with pytest.raises(CamdsApiError, match="程序异常"):
+        await api.save("CA_21_1", "CA_5_1")
+    assert faulty.attempts == 1
+    assert api.retries == 0
+
+
+async def test_a_refusal_that_is_not_a_camds_fault_stands():
+    """Only CAMDS's own "try again" is treated as a bad moment. Anything else
+    it says is an answer, and retrying would hide it behind three slow tries."""
+    class Refuses:
+        attempts = 0
+
+        async def post(self, url, **kw):
+            Refuses.attempts += 1
+
+            class Response:
+                status = 200
+
+                @staticmethod
+                async def json():
+                    return {"respCode": "1", "ok": False, "message": "版本不存在"}
+            return Response
+
+    api = CamdsApi(Refuses(), base_url="https://camds.test")
+    with pytest.raises(CamdsApiError, match="版本不存在"):
+        await api.load_tree("CA_5_1")
+    assert Refuses.attempts == 1

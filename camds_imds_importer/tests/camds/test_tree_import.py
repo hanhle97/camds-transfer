@@ -527,3 +527,37 @@ async def test_the_mode_is_off_unless_it_is_asked_for(tmp_path):
     await TreeImporter(backend, tmp_path).run(ImportRequest(two_level_tree()))
     assert backend.asked == [], "not asked at all"
     assert ("create", "m") in backend.calls
+
+
+def test_resume_carries_the_version_a_release_gave_a_material(tmp_path):
+    """Releasing bumps 0.01 to 1. A resumed run that restored the draft version
+    would attach a version CAMDS has superseded - all 70 released Materials of
+    the run of 2026-09-09 came back as 0.01."""
+    from camds_imds_importer.camds.tree_import import read_journal
+
+    path = tmp_path / "run.jsonl"
+    path.write_text("\n".join(json.dumps(entry) for entry in [
+        {"event": "started", "fingerprint": "f"},
+        {"event": "material_id_allocated", "uid": "m", "ref": ["CA_8_1", "0.01"]},
+        {"event": "material_readback_verified", "uid": "m", "ref": ["CA_8_1", "0.01"],
+         "display_name": "Steel"},
+        {"event": "release_requested", "uid": "m", "ref": ["CA_8_1", "0.01"]},
+        {"event": "released", "uid": "m", "ref": ["CA_8_1", "1"]},
+    ]), encoding="utf-8")
+
+    state = read_journal(path)
+    assert state.material_refs["m"] == ("CA_8_1", "1")
+    assert state.completed == {"m"}
+    assert state.incomplete_materials == {}
+    assert state.names["m"] == "Steel"
+
+
+def test_a_material_that_was_never_released_keeps_the_version_it_has(tmp_path):
+    from camds_imds_importer.camds.tree_import import read_journal
+
+    path = tmp_path / "run.jsonl"
+    path.write_text("\n".join(json.dumps(entry) for entry in [
+        {"event": "started", "fingerprint": "f"},
+        {"event": "material_readback_verified", "uid": "m", "ref": ["CA_8_1", "0.01"]},
+    ]), encoding="utf-8")
+    assert read_journal(path).material_refs["m"] == ("CA_8_1", "0.01")

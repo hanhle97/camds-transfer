@@ -59,6 +59,13 @@ def read_journal(path: Path) -> ResumeState:
                 state.material_refs[uid] = ref
             if entry.get("display_name"):
                 state.names[uid] = entry["display_name"]
+        elif event == "released" and uid and ref:
+            # Releasing bumps the version, 0.01 to 1. The released reference is
+            # the one the tree has to attach and verify against; carrying the
+            # draft's forward would point the tree at a version that has been
+            # superseded. A resumed run of 2026-09-09 restored all 70 released
+            # Materials as 0.01 for want of this line.
+            state.material_refs[uid] = ref
         elif event == "parent_id_allocated":
             state.root_ref = ref
         elif event == "complete_readback_verified":

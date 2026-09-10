@@ -390,13 +390,18 @@ class ApiBackend:
             parent_struts_id=parent, index=self._next_index(parent))
         self._adopt(parent, attached.struts_id)
         await self._load(attached.struts_id)
-        display = (self.view["data"] or {}).get(NAME) or attached.text
-        self._remember(tuple(parent_path) + (display,), attached.struts_id)
+        # Filed under the name the report gives it, which is the name every
+        # later address uses. CAMDS shows the referenced MDS's own name here,
+        # and that is frequently not the report's: a Component attached under
+        # the CAMDS name went missing from the list of its own siblings, so the
+        # tenth of thirteen "RESISTOR" nodes could not be addressed and a run
+        # of 2026-09-09 stopped on "expected at least 10 node(s), CAMDS has 9".
+        self._remember(tuple(parent_path) + (child["name"],), attached.struts_id)
         await self.api.set_relation(attached.struts_id,
                                     {REL_QUANTITY: number(child["quantity"])},
                                     **self._within(parent))
         await self._load(attached.struts_id)
-        return display
+        return child["name"]
 
     async def create_root(self, node, on_allocated=None, existing=None) -> tuple[str, str]:
         """Allocate the MDS, then fill it.

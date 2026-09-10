@@ -773,3 +773,43 @@ async def test_read_back_still_demands_the_whole_tree(tmp_path):
         io._resolve(("Board", "Resistor"), at=(0, 3))
 
     assert "expected 3 node(s), CAMDS has 1" in str(caught.value)
+
+
+# ------------------------- an attached Component among siblings of one name
+
+async def test_an_attached_component_is_filed_where_the_tree_addresses_it():
+    """CAMDS names a reference after the MDS it points at, and that is rarely
+    the name the report gives the position. Filed under the CAMDS name, the
+    attachment vanished from the list of its own siblings: the live run of
+    2026-09-09 reached the tenth of thirteen Components named "RESISTOR" and
+    was told "expected at least 10 node(s), CAMDS has 9", after an hour.
+    """
+    def resistor(uid, number):
+        return {"uid": uid, "node_type": "COMPONENT", "name": "RESISTOR",
+                "part_number": number, "weight_g": 1.0, "quantity": 1, "children": []}
+
+    board = {"uid": "b", "node_type": "COMPONENT", "name": "PCBA", "part_number": "B1",
+             "weight_g": 3.0, "quantity": 1, "children": []}
+    root = {"uid": "r", "node_type": "COMPONENT", "name": "Parent", "part_number": "P1",
+            "weight_g": 3.0, "children": [board]}
+
+    camds = FakeCamds()
+    io = backend(camds)
+    await io.create_root(root)
+    await io.add_component(("Parent",), board)
+
+    # The first sibling is attached; CAMDS calls it something of its own.
+    await io.add_component_reference(("Parent", "PCBA"), resistor("c0", "8909000001"),
+                                     ("CA_5_777", "2"))
+    attached = io._resolve(("Parent", "PCBA", "RESISTOR"), at=(0, 3), complete=False)
+    assert camds.nodes[attached]["treeDataNode"]["text"] != "RESISTOR", \
+        "CAMDS did rename it; that is the condition this guards against"
+
+    # The next two are built, and each must still be addressable by position.
+    await io.add_component(("Parent", "PCBA"), resistor("c1", "8909000002"))
+    await io.add_component(("Parent", "PCBA"), resistor("c2", "8909000003"))
+
+    addressed = [io._resolve(("Parent", "PCBA", "RESISTOR"), at=(i, 3), complete=False)
+                 for i in range(3)]
+    assert len(set(addressed)) == 3, "three siblings, three distinct nodes"
+    assert addressed[0] == attached, "the attached one keeps its position among them"

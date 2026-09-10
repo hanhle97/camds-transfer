@@ -84,6 +84,58 @@ def _combine(target, group) -> None:
         target["percentage_min"] = target["percentage_max"] = None
 
 
+def merge_shared_children(root, identity) -> list[str]:
+    """One node per MDS at each level, carrying what the repeats declared.
+
+    In CAMDS the MDS id is the unit: the same Component or Material cannot sit
+    twice under one parent, though it may appear again at another level. A
+    report lists them separately - "Fixed thick film chip resistor", part
+    8905501369, once and then twenty-two times under one board - so the ones
+    that resolve to the same MDS are made into one node here, before anything
+    downstream counts them.
+
+    `identity` answers what a child points at, or None for one that points at
+    nothing yet and so cannot collide with anything.
+
+    What the repeats declared is added up, in whatever the node is declared in:
+    a Component in how many there are, a Material under a Component in mass, a
+    Material inside a Semicomponent in portion. Mass is per item, so a
+    Component's total is unchanged by adding the counts together.
+    """
+    notes: list[str] = []
+
+    def absorb(kept, extra, parent) -> str:
+        if kept["node_type"] == "COMPONENT":
+            kept["quantity"] = (kept.get("quantity") or 0) + (extra.get("quantity") or 0)
+            return f"quantity {kept['quantity']:g}"
+        if parent.get("node_type") == "SEMICOMPONENT":
+            _combine(kept, [kept, extra])
+            return "one portion"
+        kept["weight_g"] = (kept.get("weight_g") or 0) + (extra.get("weight_g") or 0)
+        return f"mass {kept['weight_g']:g} g"
+
+    def visit(parent):
+        kept, first_of = [], {}
+        for child in parent.get("children") or []:
+            mds = identity(child)
+            already = first_of.get(mds) if mds else None
+            if already is not None:
+                carried = absorb(already, child, parent)
+                notes.append(
+                    f"{child.get('name')}: {mds} was listed again under "
+                    f"{parent.get('name')}; CAMDS holds one node per MDS at a level, so it "
+                    f"was written once with {carried}")
+                continue
+            if mds:
+                first_of[mds] = child
+            visit(child)
+            kept.append(child)
+        parent["children"] = kept
+
+    visit(root)
+    return notes
+
+
 # Operators triaging a large report can raise this to see the whole list.
 MAX_REPORTED_ERRORS = int(os.getenv("CAMDS_MAX_REPORTED_ERRORS", "50"))
 

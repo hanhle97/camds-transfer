@@ -466,14 +466,17 @@ class Numbered(FakeDraftBrowser):
 
     async def add_component_reference(self, parent_path, child, ref, at=(0, 1)):
         self.calls.append(("attach", child["uid"], tuple(ref)))
-        self.attached[child["name"]] = tuple(ref)
+        # Siblings can share a name, so what is attached is kept in the order it
+        # was attached and addressed by position, as CAMDS's own tree is.
+        self.attached.setdefault(child["name"], []).append(tuple(ref))
         return child["name"]
 
     async def select(self, path, at=(0, 1)):
         # As CAMDS does: selecting an attached node shows that MDS's identity.
         await super().select(path, at)
-        if path[-1] in self.attached:
-            self.current_ref = self.attached[path[-1]]
+        here = self.attached.get(path[-1]) or []
+        if at[0] < len(here):
+            self.current_ref = here[at[0]]
 
 
 def two_level_tree():
@@ -561,3 +564,233 @@ def test_a_material_that_was_never_released_keeps_the_version_it_has(tmp_path):
         {"event": "material_readback_verified", "uid": "m", "ref": ["CA_8_1", "0.01"]},
     ]), encoding="utf-8")
     assert read_journal(path).material_refs["m"] == ("CA_8_1", "0.01")
+
+
+def repeated_siblings_tree(count=3, attach_index=1):
+    """A board carrying several Components of the same name, one of them
+    already in CAMDS under its own number."""
+    def resistor(i):
+        return {"uid": f"c{i}", "node_type": "COMPONENT", "name": "RESISTOR",
+                "part_number": f"890900{i:04d}", "weight_g": 1.0, "quantity": 1,
+                "children": [{"uid": f"m{i}", "node_type": "MATERIAL", "name": "Steel",
+                              "classification": "1.1.1", "weight_g": 1.0, "children": [
+                                  {"uid": f"s{i}", "node_type": "SUBSTANCE", "name": "Iron",
+                                   "cas_number": "7439-89-6", "percentage": 100,
+                                   "children": []}]}]}
+    board = {"uid": "b", "node_type": "COMPONENT", "name": "PCBA", "part_number": "1111111111",
+             "weight_g": float(count), "quantity": 1,
+             "children": [resistor(i) for i in range(count)]}
+    return {"uid": "r", "node_type": "COMPONENT", "name": "Parent", "part_number": "9999999999",
+            "weight_g": float(count), "children": [board]}
+
+
+class Renaming(Numbered):
+    """A CAMDS whose tree holds the attachment at one position among siblings
+    that share a name, so selecting the others must not find it."""
+
+    def __init__(self, held=None, attached_at=None, **kw):
+        super().__init__(held, **kw)
+        self.attached_at = attached_at      # the occurrence that was attached
+        self.reference = None
+        self.under = []                     # where each Material was attached
+
+    async def add_component_reference(self, parent_path, child, ref, at=(0, 1)):
+        self.calls.append(("attach", child["uid"], tuple(ref), tuple(parent_path), at))
+        self.reference = tuple(ref)
+        return child["name"]
+
+    async def select(self, path, at=(0, 1)):
+        await super().select(path, at)
+        if self.reference and at[0] == self.attached_at and path[-1] == "RESISTOR":
+            self.current_ref = self.reference
+
+    async def add_material(self, parent_path, node, ref, at=(0, 1), by_portion=False,
+                           reuse_index=None):
+        self.under.append((tuple(parent_path), at))
+        return await super().add_material(parent_path, node, ref, at, by_portion, reuse_index)
+
+
+async def test_an_attached_component_still_counts_among_its_own_siblings(tmp_path):
+    """Thirteen Components named RESISTOR, one of them attached: addressing the
+    tenth found nine, and 1h38m of a live run ended there."""
+    backend = Renaming({"8909000001": ("CA_5_777", "2")}, attached_at=1)
+    result = await TreeImporter(backend, tmp_path).run(
+        ImportRequest(repeated_siblings_tree(count=3, attach_index=1)), components="number")
+
+    attached = [call for call in backend.calls if call[0] == "attach"]
+    assert [call[1] for call in attached] == ["c1"], "the middle sibling was attached"
+    # Every sibling after the attached one must still be addressed by its own
+    # position among all three, which is what stopped working.
+    assert backend.under == [(("Parent", "PCBA", "RESISTOR"), (0, 3)),
+                             (("Parent", "PCBA", "RESISTOR"), (2, 3))], backend.under
+    assert result["nodes"] == result["total"]
+
+
+def test_an_attached_component_is_recognised_by_what_it_points_at():
+    """On a resume, comparing its name would compare the report's name against
+    the name of the MDS it references, and attach a second copy."""
+    from camds_imds_importer.camds.tree_import import _child_is
+
+    child = {"uid": "c1", "node_type": "COMPONENT", "name": "RESISTOR"}
+    saved = {"name": "Chip resistor 10k 0402", "mds": "CA_5_777"}
+    assert not _child_is(child, saved, {}), "without knowing it is a reference"
+    assert _child_is(child, saved, {}, {"c1": ("CA_5_777", "2")})
+    assert not _child_is(child, {"name": "x", "mds": "CA_5_999"}, {},
+                         {"c1": ("CA_5_777", "2")}), "a different MDS is a different part"
+
+
+async def test_the_same_component_twice_under_one_parent_becomes_one_with_both_quantities(tmp_path):
+    """In CAMDS the MDS id is the unit. The report lists "Fixed thick film chip
+    resistor", part 8905501369, twice under one board - once and 22 times."""
+    def resistor(uid, quantity):
+        return {"uid": uid, "node_type": "COMPONENT", "name": "Fixed thick film chip resistor",
+                "part_number": "8905501369", "weight_g": 2.0, "quantity": quantity,
+                "children": [{"uid": "m" + uid, "node_type": "MATERIAL", "name": "Steel",
+                              "classification": "1.1.1", "weight_g": 2.0, "children": [
+                                  {"uid": "s" + uid, "node_type": "SUBSTANCE", "name": "Iron",
+                                   "cas_number": "7439-89-6", "percentage": 100,
+                                   "children": []}]}]}
+    board = {"uid": "b", "node_type": "COMPONENT", "name": "PCBA", "part_number": "1111111111",
+             "weight_g": 46.0, "quantity": 1,
+             "children": [resistor("c1", 1.0), resistor("c2", 22.0)]}
+    root = {"uid": "r", "node_type": "COMPONENT", "name": "Parent", "part_number": "9999999999",
+            "weight_g": 46.0, "children": [board]}
+
+    backend = Numbered({"8905501369": ("CA_5_777", "2")})
+    result = await TreeImporter(backend, tmp_path).run(ImportRequest(root), components="number")
+
+    attached = [call for call in backend.calls if call[0] == "attach"]
+    assert [call[1] for call in attached] == ["c1"], "one node, not two"
+    assert result["nodes"] == result["total"]
+    assert any("quantity 23" in note for note in result["skipped"]), result["skipped"]
+
+
+async def test_two_different_components_are_never_merged(tmp_path):
+    """Same name, different part numbers: two parts, two nodes."""
+    def resistor(uid, number):
+        return {"uid": uid, "node_type": "COMPONENT", "name": "RESISTOR",
+                "part_number": number, "weight_g": 1.0, "quantity": 1,
+                "children": [{"uid": "m" + uid, "node_type": "MATERIAL", "name": "Steel",
+                              "classification": "1.1.1", "weight_g": 1.0, "children": [
+                                  {"uid": "s" + uid, "node_type": "SUBSTANCE", "name": "Iron",
+                                   "cas_number": "7439-89-6", "percentage": 100,
+                                   "children": []}]}]}
+
+    board = {"uid": "b", "node_type": "COMPONENT", "name": "PCBA", "part_number": "1111111111",
+             "weight_g": 2.0, "quantity": 1,
+             "children": [resistor("c1", "8905501369"), resistor("c2", "8905501370")]}
+    root = {"uid": "r", "node_type": "COMPONENT", "name": "Parent", "part_number": "9999999999",
+            "weight_g": 2.0, "children": [board]}
+
+    backend = Numbered({"8905501369": ("CA_5_777", "2"), "8905501370": ("CA_5_778", "1")})
+    await TreeImporter(backend, tmp_path).run(ImportRequest(root), components="number")
+    assert [call[1] for call in backend.calls if call[0] == "attach"] == ["c1", "c2"]
+
+
+class Reusing(FakeDraftBrowser):
+    """A CAMDS that already holds the Material, whatever it is called here."""
+
+    REF = ("CA_8_500", "2")
+
+    async def find_existing_material(self, node):
+        return self.REF
+
+    async def value(self, label):
+        return "Steel"
+
+    async def select(self, path, at=(0, 1)):
+        await super().select(path, at)
+        if path[-1] == "Steel":
+            self.current_ref = self.REF
+
+
+async def test_the_same_material_twice_under_one_parent_becomes_one_carrying_both(tmp_path):
+    """A Material has an MDS id too, and CAMDS holds one node per id at a
+    level. Two siblings that resolve to the same one are written once, with the
+    mass of both: "Die Attach Adhesive (Ag)" appears twice under one IC."""
+    def adhesive(uid, mass):
+        return {"uid": uid, "node_type": "MATERIAL", "name": "Die Attach Adhesive (Ag)",
+                "classification": "1.1.1", "weight_g": mass, "children": [
+                    {"uid": "s" + uid, "node_type": "SUBSTANCE", "name": "Iron",
+                     "cas_number": "7439-89-6", "percentage": 100, "children": []}]}
+
+    ic = {"uid": "ic", "node_type": "COMPONENT", "name": "IC", "part_number": "IC1",
+          "weight_g": 0.000597, "quantity": 1,
+          "children": [adhesive("m1", 0.0002985), adhesive("m2", 0.0002985)]}
+    root = {"uid": "r", "node_type": "COMPONENT", "name": "Parent", "part_number": "P1",
+            "weight_g": 0.000597, "children": [ic]}
+
+    backend = Reusing()
+    result = await TreeImporter(backend, tmp_path).run(ImportRequest(root))
+
+    attached = [call for call in backend.calls if call[0] == "reference"]
+    assert [call[1] for call in attached] == ["m1"], "one node, not two"
+    assert any("mass 0.000597 g" in note for note in result["skipped"]), result["skipped"]
+    # The mass of both, so the IC still weighs what the report says it weighs.
+    assert any("Die Attach Adhesive (Ag)" in note for note in result["skipped"])
+
+
+async def test_the_same_material_at_two_levels_is_left_alone(tmp_path):
+    """CAMDS refuses two of one id at a level, not in a tree. The same Material
+    under two different Components is two ordinary references."""
+    def steel(uid):
+        return {"uid": uid, "node_type": "MATERIAL", "name": "Steel", "classification": "1.1.1",
+                "weight_g": 1.0, "children": [
+                    {"uid": "s" + uid, "node_type": "SUBSTANCE", "name": "Iron",
+                     "cas_number": "7439-89-6", "percentage": 100, "children": []}]}
+
+    inner = {"uid": "c", "node_type": "COMPONENT", "name": "Child", "part_number": "C1",
+             "weight_g": 1.0, "quantity": 1, "children": [steel("m2")]}
+    root = {"uid": "r", "node_type": "COMPONENT", "name": "Parent", "part_number": "P1",
+            "weight_g": 2.0, "children": [steel("m1"), inner]}
+
+    backend = Reusing()
+    result = await TreeImporter(backend, tmp_path).run(ImportRequest(root))
+    assert [call[1] for call in backend.calls if call[0] == "reference"] == ["m1", "m2"]
+    assert not [note for note in result["skipped"] if "listed again" in note]
+
+
+async def test_a_run_that_reused_everything_still_finishes_at_the_full_count(tmp_path):
+    """A finished import said "28 / 42" and left the bar at two thirds.
+
+    The plan is made before CAMDS is asked anything, so it budgets a step for
+    every substance of every Material. A Material found already in CAMDS costs
+    one step instead, and those substance steps are then not work left undone.
+    """
+    class Reused(FakeDraftBrowser):
+        async def find_existing_material(self, node):
+            return ("CA_8_500", "2")
+
+        async def value(self, label):
+            return "Steel"
+
+        async def select(self, path, at=(0, 1)):
+            await super().select(path, at)
+            if path[-1] == "Steel":
+                self.current_ref = ("CA_8_500", "2")
+
+    root = fixture_tree()
+    material = root["children"][0]["children"][0]
+    material["children"] = [
+        {"uid": f"s{i}", "node_type": "SUBSTANCE", "name": f"Sub {i}", "cas_number": None,
+         "percentage": 25.0, "children": []} for i in range(4)]
+
+    planned = len(ImportRequest(root).snapshot().plan())
+    result = await TreeImporter(Reused(), tmp_path).run(ImportRequest(root))
+
+    assert result["nodes"] == result["total"], f"{result['nodes']} of {result['total']}"
+    assert result["total"] == planned - 4, "the four substances were never going to be added"
+
+
+async def test_the_total_never_drops_below_what_was_already_done(tmp_path):
+    """A count that walks backwards past the work already done would be worse
+    than one that overshoots."""
+    from camds_imds_importer.camds.import_control import Reporter
+
+    reporter = Reporter(10, lambda event: None)
+    for _ in range(6):
+        reporter.done()
+    reporter.drop(9)
+    assert (reporter.completed, reporter.total) == (6, 6)
+    reporter.drop(-3)
+    assert reporter.total == 6, "a negative drop is not an increase"

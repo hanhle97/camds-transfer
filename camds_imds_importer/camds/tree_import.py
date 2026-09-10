@@ -13,7 +13,8 @@ from playwright.async_api import expect
 from .api import CamdsApiError, number
 from .application_mapping import ApplicationMapping, Resolution, normalise
 from .import_control import ImportControl, ImportStopped, Reporter
-from .import_plan import ImportRequest, proportion, real_cas, truncated
+from .import_plan import (ImportRequest, merge_shared_children, proportion,
+                          real_cas, truncated)
 from .operations import CREATE_URL, NAVIGATION_TIMEOUT_MS, SEARCH_URL, CreateRequest, form_item
 
 
@@ -460,16 +461,24 @@ class DraftBrowser:
         await self.verify_proportion(node)
 
 
-def _child_is(child, present, refs):
+def _child_is(child, present, refs, attached=None):
     """Whether the node CAMDS already holds at this position is this child.
 
     A Material is identified by the MDS it points at, which cannot drift; a
     Component or Semicomponent by the name that was written into it, so a node
     created but never named does not pass for a finished one.
+
+    A Component attached rather than built is a reference too, so it is
+    identified the way a Material is. Comparing its name would compare the
+    report's name against the name the referenced MDS carries, and a resumed
+    run would attach a second copy of a Component that is already there.
     """
     if child["node_type"] == "MATERIAL":
         ref = refs.get(child["uid"])
         return bool(ref) and str(present.get("mds") or "") == ref[0]
+    reference = (attached or {}).get(child["uid"])
+    if reference:
+        return str(present.get("mds") or "") == reference[0]
     return str(present.get("name") or "").strip() == str(child["name"]).strip()
 
 
@@ -602,6 +611,12 @@ class TreeImporter:
 
         Top down, and a matched Component is not descended into: what is inside
         it is that MDS's business, not this import's.
+
+        In CAMDS the MDS id is the unit, so the same Component cannot sit twice
+        under one parent. Where the report lists it twice - "Fixed thick film
+        chip resistor", part 8905501369, once and then twenty-two times - the
+        two become one node carrying the quantity of both. Mass is per item and
+        is unchanged by that, so what the parent weighs stays what it weighed.
         """
         find = getattr(self.io, "find_component_by_number", None)
         if find is None:
@@ -609,7 +624,7 @@ class TreeImporter:
         matched: dict[str, tuple] = {}
 
         async def visit(node):
-            for child in list(node.get("children") or []):
+            for child in node.get("children") or []:
                 if child.get("node_type") != "COMPONENT":
                     continue
                 found = await find(child)
@@ -623,6 +638,8 @@ class TreeImporter:
                     await visit(child)
 
         await visit(request.root)
+        self.reused += merge_shared_children(
+            request.root, lambda child: (matched.get(child["uid"]) or (None,))[0])
         return matched
 
     async def _settle_cut_names(self, request) -> list[str]:
@@ -754,8 +771,14 @@ class TreeImporter:
             for mat in request.materials():
                 await gate()
                 reporter.step(mat["uid"], mat["name"], "MATERIAL")
+                # What the plan expected to spend on a Material it no longer
+                # has to build: one step per substance, the create itself being
+                # the step that is really taken.
+                unplanned = (0 if mat["uid"] in request.material_refs
+                             else len(mat.get("children") or []))
                 if mat["uid"] in done_uids:
                     reporter.done()
+                    reporter.drop(unplanned)
                     reporter("skipped_completed")
                     continue
                 if mat["uid"] in refs:
@@ -775,6 +798,7 @@ class TreeImporter:
                         await self.io.open_saved("Material", refs[mat["uid"]])
                         names[mat["uid"]] = await self.io.value("Material Name")
                         reporter.done()
+                        reporter.drop(unplanned)
                         record("existing_material_reused", uid=mat["uid"], ref=list(found),
                                display_name=names[mat["uid"]], name=mat["name"])
                         self.reused.append(
@@ -870,6 +894,21 @@ class TreeImporter:
 
                     await match(root)
 
+                # Now that every child's MDS is known, the ones that turned out
+                # to be the same MDS at the same level become one node. It has
+                # to happen before anything counts the children: the paths just
+                # below, the read-back's child counts, and the tree itself.
+                def points_at(child):
+                    settled = matched.get(child["uid"]) or refs.get(child["uid"])
+                    return settled[0] if settled else None
+
+                shared = merge_shared_children(root, points_at)
+                if shared:
+                    self.reused += shared
+                    journal.record("merged_shared_mds", notes=shared)
+                    # Each repeat was planned as a node of its own to attach.
+                    reporter.drop(len(shared))
+
                 # Repeated names are addressed by document order instead of being
                 # refused: CAMDS shows children in the order they were added, and
                 # the final read-back checks every value in that same order.
@@ -913,7 +952,7 @@ class TreeImporter:
                     for index, child in enumerate(node["children"]):
                         await gate()
                         present = held[index] if index < len(held) else None
-                        done = present is not None and _child_is(child, present, refs)
+                        done = present is not None and _child_is(child, present, refs, matched)
                         reuse = index if present is not None and not done else None
                         if child["node_type"] in ("COMPONENT", "SEMICOMPONENT"):
                             semi = child["node_type"] == "SEMICOMPONENT"

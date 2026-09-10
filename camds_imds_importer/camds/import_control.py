@@ -189,6 +189,18 @@ class Reporter:
         self.completed += 1
         self.succeeded += 1
 
+    def drop(self, steps: int) -> None:
+        """Steps the plan asked for that this run turns out not to take.
+
+        The plan is made before CAMDS is asked anything, so it assumes every
+        Material has to be built. Most runs then find half of them already
+        there and reuse them, which is one step instead of one per substance -
+        and the total stayed as planned, so a finished import reported "28 / 42"
+        and a progress bar stuck at two thirds. What a run will not do is not
+        work left undone.
+        """
+        self.total = max(self.completed, self.total - max(0, int(steps)))
+
     def fail(self) -> None:
         self.failed += 1
 

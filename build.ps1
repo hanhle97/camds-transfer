@@ -111,7 +111,38 @@ if ($IncludeBrowser) {
     Remove-Item Env:\PLAYWRIGHT_BROWSERS_PATH -ErrorAction SilentlyContinue
     Note "Into this machine's profile; the target machine downloads its own on first run"
 }
-Invoke-Native $venvPython @("-m", "playwright", "install", "chromium") "Installing Chromium"
+# Node carries its own list of trusted authorities and does not read Windows'.
+# Behind a proxy that re-signs HTTPS - every corporate one does - the download
+# fails on a certificate Windows itself trusts, saying only
+# "unable to get local issuer certificate".
+try {
+    Invoke-Native $venvPython @("-m", "playwright", "install", "chromium") "Installing Chromium"
+} catch {
+    Write-Host @"
+
+The browser could not be downloaded.
+
+If the error above says "unable to get local issuer certificate", the download
+was not blocked: this network re-signs HTTPS, and Node does not read Windows'
+own list of trusted authorities. Hand it that list and build again:
+
+    `$pem = "`$env:USERPROFILE\corporate-roots.pem"
+    Get-ChildItem Cert:\LocalMachine\Root, Cert:\LocalMachine\CA | ForEach-Object {
+        "-----BEGIN CERTIFICATE-----"
+        [Convert]::ToBase64String(`$_.RawData, 'InsertLineBreaks')
+        "-----END CERTIFICATE-----"
+    } | Set-Content `$pem -Encoding ascii
+    `$env:NODE_EXTRA_CA_CERTS = `$pem
+
+Or take the browser from a machine that already has one, and download nothing:
+copy the chromium-* and winldd-* folders from that machine's
+%LOCALAPPDATA%\ms-playwright into
+    $buildVenv\Lib\site-packages\playwright\driver\package\.local-browsers
+then run this script again - it will find them and skip the download.
+
+"@ -ForegroundColor Yellow
+    throw
+}
 
 Step "Stamping the build"
 # So a running executable can say which commit it came from. Three runs were

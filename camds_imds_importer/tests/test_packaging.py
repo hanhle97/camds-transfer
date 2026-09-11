@@ -193,7 +193,7 @@ def test_a_blocked_browser_download_says_what_to_do_instead(monkeypatch, tmp_pat
     message = browser_runtime._download_failed([
         "Downloading Chromium 140.0 (playwright build v1187)",
         "Error: Download failure, code=1",
-        "at ChildProcess.<anonymous> (C:\Temp\_MEI0000\playwright\driver\coreBundle.js:32015:32)",
+        r"at ChildProcess.<anonymous> (C:\Temp\_MEI0000\playwright\driver\coreBundle.js:32015:32)",
         "at ChildProcess.emit (node:events:519:28)",
         "at ChildProcess._handle.onexit (node:internal/child_process:295:12)",
     ])

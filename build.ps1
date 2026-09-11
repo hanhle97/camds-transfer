@@ -111,12 +111,40 @@ if ($IncludeBrowser) {
     Remove-Item Env:\PLAYWRIGHT_BROWSERS_PATH -ErrorAction SilentlyContinue
     Note "Into this machine's profile; the target machine downloads its own on first run"
 }
+# A browser this machine already has is the browser this build needs. Playwright
+# keeps one per profile, and a bundled build looks inside its own package
+# instead - so without this the same 430 MB is fetched a second time on a
+# machine that is already carrying it, and on a network that will not serve it
+# the build fails with one sitting on the disk.
+if ($IncludeBrowser) {
+    $packaged = Join-Path $buildVenv "Lib\site-packages\playwright\driver\package\.local-browsers"
+    $profileBrowsers = Join-Path $env:LOCALAPPDATA "ms-playwright"
+    $alreadyPackaged = Test-Path (Join-Path $packaged "chromium-*")
+    if (-not $alreadyPackaged -and (Test-Path $profileBrowsers)) {
+        $carried = Get-ChildItem $profileBrowsers -Directory |
+            Where-Object { $_.Name -like "chromium-*" -or $_.Name -like "winldd-*" }
+        if ($carried) {
+            Step "Taking the browser this machine already has"
+            New-Item -ItemType Directory -Force $packaged | Out-Null
+            foreach ($one in $carried) {
+                Copy-Item -Recurse -Force $one.FullName (Join-Path $packaged $one.Name)
+                Note $one.Name
+            }
+            Note "Copied from $profileBrowsers; nothing to download"
+        }
+    }
+}
+
 # Node carries its own list of trusted authorities and does not read Windows'.
 # Behind a proxy that re-signs HTTPS - every corporate one does - the download
 # fails on a certificate Windows itself trusts, saying only
 # "unable to get local issuer certificate".
 try {
-    Invoke-Native $venvPython @("-m", "playwright", "install", "chromium") "Installing Chromium"
+    # --no-shell: the headless shell is a second 271 MB browser, and this
+    # application only ever launches a window. Without it the bundle carried
+    # both, and a machine that cannot download went looking for the one it had
+    # no use for.
+    Invoke-Native $venvPython @("-m", "playwright", "install", "chromium", "--no-shell") "Installing Chromium"
 } catch {
     Write-Host @"
 

@@ -78,7 +78,11 @@ def check_command() -> int:
 
     async def probe() -> str:
         async with async_playwright() as runtime:
-            browser = await runtime.chromium.launch(headless=True)
+            # The browser the application really launches. Plain headless would
+            # start the headless shell instead - a second browser this build
+            # does not carry, because nothing here ever runs without a window -
+            # and the check would fail on a build that works.
+            browser = await runtime.chromium.launch(headless=True, channel="chromium")
             version = browser.version
             await browser.close()
             return version

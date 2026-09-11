@@ -459,6 +459,24 @@ class Numbered(FakeDraftBrowser):
         self.held = held or {}          # part number -> (mds id, version)
         self.attached = {}              # name in the tree -> what is attached there
         self.asked = []
+        # What the saved tree holds under each path, in the order it was added.
+        # The read-back asks CAMDS this, and a reference is recognised in it by
+        # position and by the MDS it points at, never by its name.
+        self.saved = {}
+
+    def _record(self, parent_path, name, mds=None):
+        self.saved.setdefault(tuple(parent_path), []).append({"name": name, "mds": mds})
+
+    async def saved_children(self, path, at=(0, 1)):
+        return list(self.saved.get(tuple(path), []))
+
+    async def add_component(self, path, node, at=(0, 1), reuse_index=None):
+        self._record(path, node["name"])
+        return await super().add_component(path, node, at, reuse_index)
+
+    async def add_material(self, path, node, ref, at=(0, 1), by_portion=False, reuse_index=None):
+        self._record(path, node["name"], ref[0])
+        return await super().add_material(path, node, ref, at, by_portion, reuse_index)
 
     async def find_component_by_number(self, node):
         self.asked.append(node.get("part_number"))
@@ -469,6 +487,9 @@ class Numbered(FakeDraftBrowser):
         # Siblings can share a name, so what is attached is kept in the order it
         # was attached and addressed by position, as CAMDS's own tree is.
         self.attached.setdefault(child["name"], []).append(tuple(ref))
+        # CAMDS labels a reference after the MDS it points at, not after the
+        # name the report gives the position.
+        self._record(parent_path, "whatever CAMDS calls " + ref[0], ref[0])
         return child["name"]
 
     async def select(self, path, at=(0, 1)):
@@ -597,6 +618,7 @@ class Renaming(Numbered):
     async def add_component_reference(self, parent_path, child, ref, at=(0, 1)):
         self.calls.append(("attach", child["uid"], tuple(ref), tuple(parent_path), at))
         self.reference = tuple(ref)
+        self._record(parent_path, "whatever CAMDS calls " + ref[0], ref[0])
         return child["name"]
 
     async def select(self, path, at=(0, 1)):
@@ -794,3 +816,100 @@ async def test_the_total_never_drops_below_what_was_already_done(tmp_path):
     assert (reporter.completed, reporter.total) == (6, 6)
     reporter.drop(-3)
     assert reporter.total == 6, "a negative drop is not an increase"
+
+
+async def test_the_read_back_asks_what_the_attached_position_points_at(tmp_path):
+    """The saved tree calls a reference after the MDS it points at, so there is
+    no name that addresses it both while building and when reading back. The
+    position is the same in both trees, and the MDS is the whole question - a
+    live run stopped at "expected at least 1 node(s), CAMDS has 0" for want of
+    that."""
+    class Moved(Numbered):
+        """CAMDS holds something else where the attachment should be."""
+
+        def _record(self, parent_path, name, mds=None):
+            super()._record(parent_path, name, "CA_5_999" if mds == "CA_5_777" else mds)
+
+    root = two_level_tree()
+    with pytest.raises(RuntimeError, match="CAMDS has CA_5_999 at position 1"):
+        await TreeImporter(Moved({"1234567890": ("CA_5_777", "3")}), tmp_path).run(
+            ImportRequest(root), components="number")
+
+
+class Existing(FakeDraftBrowser):
+    """A CAMDS holding one Component the operator wants the tree written into."""
+
+    def __init__(self, held=(), **kw):
+        super().__init__(**kw)
+        self.held = list(held)
+        self.opened = []
+        self.created_roots = 0
+
+    async def open_saved(self, kind, ref):
+        self.opened.append((kind, tuple(ref)))
+        await super().open_saved(kind, ref)
+
+    async def saved_children(self, path, at=(0, 1)):
+        return list(self.held) if not path else []
+
+    async def create_root(self, node, on_allocated=None, existing=None):
+        if existing is None:
+            # Materials still get their own MDS; what must not be allocated is
+            # a second Component to hold the tree.
+            self.created_roots += node["node_type"] == "COMPONENT"
+            return await super().create_root(node, on_allocated)
+        self.calls.append(("fill", node["uid"], tuple(existing)))
+        self.current_ref = tuple(existing)
+        return tuple(existing)
+
+
+async def test_the_tree_is_written_into_the_component_that_was_given(tmp_path):
+    """No new Component is created; the one named is filled and the tree built
+    inside it."""
+    backend = Existing()
+    result = await TreeImporter(backend, tmp_path).run(
+        ImportRequest(fixture_tree()), root_ref=("CA_5_4242", "0.01"))
+
+    assert backend.created_roots == 0, "nothing new was allocated"
+    assert ("fill", "r", ("CA_5_4242", "0.01")) in backend.calls
+    assert result["identity"] == "CA_5_4242/0.01"
+    assert any("written into CA_5_4242/0.01" in note for note in result["skipped"])
+    events = [json.loads(line) for line in next(tmp_path.glob("*.jsonl")).read_text().splitlines()]
+    kinds = [e["event"] for e in events]
+    assert "parent_id_allocated" in kinds, "a resume has to find the id this run wrote into"
+    assert "create_parent_requested" not in kinds
+
+
+async def test_a_component_that_already_holds_something_is_refused(tmp_path):
+    """Filling it would put a second copy of what is in there beside the first,
+    and from here one cannot be told from the other."""
+    backend = Existing(held=[{"name": "Bracket", "mds": "CA_5_9"},
+                             {"name": "Steel", "mds": "CA_8_9"}])
+    with pytest.raises(RuntimeError, match="already holds 2 node"):
+        await TreeImporter(backend, tmp_path).run(
+            ImportRequest(fixture_tree()), root_ref=("CA_5_4242", "0.01"))
+
+    assert backend.created_roots == 0
+    assert not [call for call in backend.calls if call[0] == "fill"], "nothing was written"
+
+
+async def test_a_material_root_cannot_be_written_into_a_component(tmp_path):
+    root = fixture_tree()["children"][0]["children"][0]
+    with pytest.raises(RuntimeError, match="names a Component"):
+        await TreeImporter(Existing(), tmp_path).run(
+            ImportRequest(root), root_ref=("CA_5_4242", "0.01"))
+
+
+async def test_a_typed_id_that_contradicts_the_journal_is_refused(tmp_path):
+    """Two answers to "where does this run write", and no way to choose."""
+    from camds_imds_importer.camds.tree_import import ResumeState
+
+    importer = TreeImporter(Existing(), tmp_path)
+    state = ResumeState(root_ref=("CA_5_1", "0.01"))
+    root = {"uid": "r", "node_type": "COMPONENT", "name": "Parent", "children": []}
+
+    with pytest.raises(RuntimeError, match="Clear one of the two"):
+        await importer._empty_root(root, ("CA_5_2", "0.01"), state)
+
+    # The same id is no contradiction; the resume path opens it.
+    assert await importer._empty_root(root, ("CA_5_1", "0.01"), state) is None

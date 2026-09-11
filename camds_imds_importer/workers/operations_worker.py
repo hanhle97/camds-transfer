@@ -415,7 +415,8 @@ class OperationsWorker(QThread):
                                         request, resume=options.get("resume", False),
                                         reuse=options.get("reuse", True),
                                         release=options.get("release", False),
-                                        components=options.get("components", "contents")))
+                                        components=options.get("components", "contents"),
+                                        root_ref=options.get("root_ref")))
                                 elif action == "search":
                                     task = asyncio.create_task(self._survey(api, request))
                                 elif action == "check_substances":

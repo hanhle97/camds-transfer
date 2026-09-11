@@ -1,8 +1,10 @@
 """Review parsed-tree mapping before any external Create/Save operation."""
+import re
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QCompleter, QDialog, QVBoxLayout, QLabel, QTableWidget,
-    QTableWidgetItem, QPlainTextEdit, QPushButton, QHBoxLayout,
+    QCheckBox, QComboBox, QCompleter, QDialog, QVBoxLayout, QLabel, QLineEdit,
+    QTableWidget, QTableWidgetItem, QPlainTextEdit, QPushButton, QHBoxLayout,
 )
 
 from ..camds.application_mapping import ApplicationMapping
@@ -53,6 +55,28 @@ class ImportDialog(QDialog):
             self.subtree.addItem(f"{'    ' * depth}{node['node_type']}: {node['name']} ({size} nodes)", node)
         picker.addWidget(self.subtree, 1)
         layout.addLayout(picker)
+        # Where the tree is written. Empty means a new Component; an id means an
+        # existing one, which a report re-imported into a Component somebody
+        # already created needs, and which is the only way back to a tree whose
+        # journal is gone.
+        into = QHBoxLayout()
+        into.addWidget(QLabel("Write into Component:"))
+        self.root_id = QLineEdit()
+        self.root_id.setPlaceholderText("empty: create a new Component  ·  or CA_5_…")
+        self.root_version = QLineEdit()
+        self.root_version.setPlaceholderText("version, e.g. 0.01")
+        self.root_version.setMaximumWidth(140)
+        for box in (self.root_id, self.root_version):
+            box.setToolTip(
+                "Leave both empty to create a new Component for this tree. Give the CAMDS ID and "
+                "the exact version of one that already exists to write the tree into it instead. "
+                "It has to be empty: filling one that already holds something would put a second "
+                "copy of those beside the first. Its name, number and mass are written from the "
+                "report.")
+            box.textChanged.connect(self.invalidate)
+        into.addWidget(self.root_id, 1)
+        into.addWidget(self.root_version)
+        layout.addLayout(into)
         self.materials = []
         self.class_choice: dict[int, QComboBox] = {}   # row -> chooser, where IMDS printed none
         self.mapping_table = QTableWidget(0, 5)
@@ -165,6 +189,11 @@ class ImportDialog(QDialog):
         self.request = None
         self.start.setEnabled(False)
 
+    def root_reference(self):
+        """The Component to write into, or None to create one."""
+        wanted = (self.root_id.text().strip(), self.root_version.text().strip())
+        return wanted if any(wanted) else None
+
     def validate_plan(self):
         refs = {}
         for row, node in enumerate(self.materials):
@@ -174,6 +203,15 @@ class ImportDialog(QDialog):
         chosen = {self.materials[row]["uid"]: choice.currentData()
                   for row, choice in self.class_choice.items() if choice.currentData()}
         request = ImportRequest(self.root, refs, chosen).snapshot()
+        into = self.root_reference()
+        if into and not (re.fullmatch(r"CA_\d+_\d+", into[0])
+                         and re.fullmatch(r"\d+(?:\.\d+)?", into[1])):
+            self.preview.setPlainText(
+                "Write into Component: give both an exact CAMDS ID (CA_5_…) and its exact "
+                "version, or leave both empty to create a new Component. An IMDS ID is not a "
+                "CAMDS ID.")
+            self.invalidate()
+            return
         try:
             warnings = request.validate(self.mapping)
         except (ValueError, TypeError) as exc:
@@ -182,6 +220,9 @@ class ImportDialog(QDialog):
             return
         lines = ["Ready for draft transfer. Existing material composition will be reused, not overwritten.",
                  "Journal prevents automatic replay after failure. No automatic rollback/delete."]
+        if into:
+            lines.append(f"The tree will be written into {into[0]}/{into[1]} - no new Component "
+                         "is created. It must be empty, or the run stops before writing.")
         # Accepted as declared, but the operator has to see them before starting.
         if request.merges:
             lines.append("")

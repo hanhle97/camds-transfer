@@ -595,6 +595,39 @@ class TreeImporter:
                    camds_value=str(resolution.value), camds_label=chosen["label"],
                    source=resolution.source)
 
+    async def _empty_root(self, root, root_ref, state):
+        """The Component the operator gave to write into, once it is safe to.
+
+        Refused rather than filled when it already holds something: adding to it
+        would put a second copy of whatever is in there beside the first, and
+        from here one cannot be told from the other. Refused, too, when it
+        contradicts a journal that already names a root - that run's own id is
+        the one to continue with.
+        """
+        if not root_ref:
+            return None
+        given = tuple(root_ref)
+        if root["node_type"] != "COMPONENT":
+            raise RuntimeError(
+                f"{root['name']} is a {root['node_type'].title()}, and the CAMDS ID given to "
+                "write into names a Component. Start the import at a Component, or clear it.")
+        if state.root_ref and tuple(state.root_ref) != given:
+            raise RuntimeError(
+                f"This run is being resumed into {'/'.join(state.root_ref)}, which is not the "
+                f"{'/'.join(given)} that was typed in. Clear one of the two.")
+        if state.root_ref:
+            return None  # the same id; the resume path opens it
+        await self.io.open_saved("Component", given)
+        held = await self.io.saved_children([])
+        if held:
+            raise RuntimeError(
+                f"{'/'.join(given)} already holds {len(held)} node(s) - "
+                f"{', '.join(str(child.get('name') or '?') for child in held[:5])}"
+                f"{' ...' if len(held) > 5 else ''}. Writing the tree into it would put a "
+                "second copy of those beside the first. Use an empty Component, or resume the "
+                "run that created them.")
+        return given
+
     async def _match_by_number(self, request) -> dict:
         """Attach the Components CAMDS already holds under their Part No.
 
@@ -700,7 +733,7 @@ class TreeImporter:
             + str(answer_in.path if answer_in else "the substance mapping file") + " first?")
 
     async def run(self, request: ImportRequest, resume: bool = False, reuse: bool = True,
-                  release: bool = False, components: str = "contents"):
+                  release: bool = False, components: str = "contents", root_ref=None):
         """Import the tree.
 
         `reuse` searches CAMDS for a Material before making another one; off,
@@ -714,6 +747,13 @@ class TreeImporter:
         can only be asked once the subtree below has been built. "number" takes
         the Part No. alone, before anything is built, and attaches what CAMDS
         holds under it without building any of the inside.
+
+        `root_ref` writes the tree into a Component that already exists in CAMDS
+        instead of creating one. It has to be empty: filling a Component that
+        already holds something would add a second copy of whatever is in it,
+        and nothing here can tell the operator's own work from a repeat. Its
+        name, number and mass are written from the report, so the read-back can
+        check the root like any other node.
         """
         request = request.snapshot()
         self.skipped = []
@@ -730,6 +770,9 @@ class TreeImporter:
         by_number = await self._match_by_number(request) if components == "number" else {}
         plan = request.plan()
         journal, state = self._open_journal(request, resume, await self.io.can_reenter_saved())
+        # Asked before the first Material is touched: being told where this run
+        # writes is no use after it has started writing.
+        given = await self._empty_root(request.root, root_ref, state)
         reporter = Reporter(len(plan), self.progress)
         # Field-level progress is emitted by the backend while it fills a form.
         setattr(self.io, "reporter", reporter)
@@ -935,6 +978,17 @@ class TreeImporter:
                 if resuming_tree:
                     root_ref = await self.io.create_root(root, existing=state.root_ref)
                     record("parent_resumed", uid=root["uid"], ref=root_ref, name=root["name"])
+                elif given:
+                    # Journalled as an allocation, because that is what it is to
+                    # every later step: the id this run writes into, and the one
+                    # a resume has to reopen.
+                    record("parent_id_allocated", uid=root["uid"], ref=list(given))
+                    root_ref = await self.io.create_root(root, existing=given)
+                    record("parent_reused", uid=root["uid"], ref=root_ref, name=root["name"])
+                    self.reused.append(
+                        f"{root['name']}: written into {'/'.join(given)}, which already existed "
+                        "in CAMDS; no new Component was created")
+                    await save(root["uid"])
                 else:
                     record("create_parent_requested", uid=root["uid"], name=root["name"])
                     root_ref = await self.io.create_root(root, on_allocated=lambda allocated: record(
@@ -1022,18 +1076,27 @@ class TreeImporter:
                         await self.io.verify_value("Measured Mass per Item", float(node["weight_g"]))
                         if len(path) > 1:
                             await self.io.verify_value("Quantity", float(node["quantity"]))
-                    for child in node["children"]:
+                    held = await self.io.saved_children(path, at=at(node["uid"]))
+                    for index, child in enumerate(node["children"]):
                         if child["uid"] in matched:
                             # Attached, not built: what is checked is that the
                             # tree points at the Component that was matched. Its
                             # contents are its own MDS's business.
-                            await self.io.select(path + [names[child["uid"]]], at=at(child["uid"]))
-                            saved = await self.io.identity()
-                            if saved != tuple(matched[child["uid"]]):
+                            #
+                            # Asked by position rather than by name. The read-back
+                            # reopens the saved tree, and CAMDS labels a reference
+                            # with the name of the MDS it points at, which is not
+                            # the name the report gives that position - so there
+                            # is no name here that addresses it in both trees. The
+                            # position is the same in both, and the MDS is the
+                            # whole question.
+                            saved = held[index].get("mds") if index < len(held) else None
+                            if saved != matched[child["uid"]][0]:
                                 raise RuntimeError(
                                     f"{child['name']}: expected the Component "
                                     f"{'/'.join(matched[child['uid']])} under "
-                                    f"{' / '.join(path)}, CAMDS has {'/'.join(saved)}")
+                                    f"{' / '.join(path)}, CAMDS has {saved or 'nothing'} "
+                                    f"at position {index + 1}")
                         elif child["node_type"] in ("COMPONENT", "SEMICOMPONENT"):
                             await verify(child, path + [child["name"]], node["node_type"])
                         else:

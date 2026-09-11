@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import time
 from pathlib import Path
 
@@ -327,16 +328,38 @@ class MainWindow(QMainWindow):
     def report_problem(self) -> None:
         """Open a mail to the developer with what is always asked for anyway.
 
-        Nothing is sent from here. The mail opens in the machine's own mail
-        program, already carrying the build, the report and the tail of the log,
-        and the operator decides what to add and whether to send it.
+        Outlook is asked directly where there is one: a mailto: handed to the
+        shell opens whatever claims the scheme, and on a managed machine that is
+        a browser. Outlook also takes an attachment, so the whole log goes
+        rather than as much of it as a command line will carry.
+
+        Nothing is sent from here. The operator adds what only they know - what
+        they were doing, and what happened instead - and decides whether to send.
         """
-        url = QUrl(support.report(
-            build=build_stamp(),
-            report_name=self.source_path.name if self.source_path else "",
-            stage=self.stage_label.text().replace("Current stage: ", ""),
-            log=self.logs_tab.viewer.toPlainText()))
-        if QDesktopServices.openUrl(url):
+        details = {
+            "build": build_stamp(),
+            "report_name": self.source_path.name if self.source_path else "",
+            "stage": self.stage_label.text().replace("Current stage: ", ""),
+            "log": self.logs_tab.viewer.toPlainText(),
+        }
+        outlook = support.outlook()
+        if outlook:
+            try:
+                support.open_in_outlook(
+                    outlook, address=support.DEVELOPER,
+                    subject=support.subject_of(details["build"]),
+                    body=support.body(**details, attached=True),
+                    attachment=self._log_file(details["log"]))
+                self.logs_tab.append(
+                    "INFO", f"Opened a problem report to {support.DEVELOPER} in Outlook, "
+                            "with the log attached.")
+                return
+            except OSError as exc:
+                # Outlook is there but would not start; the shell may still have
+                # something that opens a mail.
+                self.logs_tab.append("WARNING", f"Outlook did not start ({exc}); "
+                                                "falling back to the default mail program.")
+        if QDesktopServices.openUrl(QUrl(support.report(**details))):
             self.logs_tab.append("INFO", f"Opened a problem report to {support.DEVELOPER}.")
             return
         # No mail program is registered, or the shell refused the link.
@@ -344,6 +367,12 @@ class MainWindow(QMainWindow):
             self, "Report a problem",
             "This machine has no mail program set up to open the message." + chr(10) * 2
             + f"Write to {support.DEVELOPER} instead, and paste the Logs tab into the mail.")
+
+    def _log_file(self, log: str):
+        """The log written out, so Outlook can attach the whole of it."""
+        path = Path(tempfile.gettempdir()) / "camds-importer-log.txt"
+        path.write_text(log or "(empty)", encoding="utf-8")
+        return path
 
     def select_pdf(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(self, "Import IMDS PDF", "", "PDF files (*.pdf)")

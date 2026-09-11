@@ -107,3 +107,51 @@ def test_a_long_log_keeps_its_end_and_says_what_was_dropped():
     assert "line 0" + chr(10) not in body, "the beginning is what goes"
     assert "earlier lines left out" in body, "and it says so"
     assert len(url) < 4000, "short enough for the shell to pass on"
+
+
+def test_outlook_is_asked_directly_rather_than_the_shell():
+    """A mailto: handed to the shell opens whatever claims the scheme, and on a
+    managed machine that is a browser. The operator asked for a mail."""
+    from camds_imds_importer.ui import support
+
+    command = support.outlook_command(
+        r"C:\Office16\OUTLOOK.EXE", address=support.DEVELOPER, subject="A problem",
+        body="what happened", attachment=r"C:\Temp\log.txt")
+
+    assert command[0] == r"C:\Office16\OUTLOOK.EXE"
+    assert command[1:3] == ["/c", "ipm.note"], "a new message"
+    assert command[3] == "/m"
+    assert command[4].startswith(support.DEVELOPER + "?"), "no scheme: /m takes it without"
+    assert "subject=A%20problem" in command[4]
+    assert command[-2:] == ["/a", r"C:\Temp\log.txt"], "the whole log travels as a file"
+
+
+def test_without_an_attachment_outlook_is_not_given_an_empty_switch():
+    from camds_imds_importer.ui import support
+
+    command = support.outlook_command("OUTLOOK.EXE", address="a@b", subject="s", body="b")
+    assert "/a" not in command
+
+
+def test_the_mail_says_the_log_is_attached_instead_of_quoting_it():
+    """A command line will not carry 4000 lines; the attachment will."""
+    from camds_imds_importer.ui import support
+
+    text = support.body(build="b", report_name="r", stage="s",
+                        log=chr(10).join(f"line {i}" for i in range(500)), attached=True)
+    assert "(attached in full)" in text
+    assert "line 499" not in text, "it is in the file, not in the body"
+    assert "Build      : b" in text
+
+
+def test_a_machine_without_outlook_still_gets_a_mail():
+    """The shell's own handler, with the tail of the log in the body."""
+    import sys
+
+    from camds_imds_importer.ui import support
+
+    assert support.outlook() is None or support.outlook().name.upper() == "OUTLOOK.EXE"
+    if sys.platform != "win32":
+        assert support.outlook() is None
+    assert support.report(build="b", report_name="r", stage="s",
+                          log="something").startswith("mailto:" + support.DEVELOPER)

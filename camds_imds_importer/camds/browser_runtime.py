@@ -48,6 +48,30 @@ def chromium_present() -> bool:
     return any(next(root.glob(pattern), None) for pattern in patterns)
 
 
+def _download_failed(lines) -> str:
+    """What to tell someone whose machine cannot fetch the browser.
+
+    The driver answers a blocked download with a Node stack trace, which was put
+    on screen as it stood. It says nothing about what to do, and the two things
+    that can be done need no download at all.
+    """
+    said = " ".join(line for line in lines if line.startswith(("Error:", "Failed", "code=")))
+    where = browsers_root()
+    return chr(10).join([
+        "Could not download the browser this program drives CAMDS through.",
+        "",
+        f"It is fetched from Playwright's download server into {where}. A network that",
+        "reaches the internet through a proxy blocks that unless HTTPS_PROXY is set",
+        "before the program starts.",
+        "",
+        "Two ways round it, neither of which downloads anything:",
+        "  - use a build made with -IncludeBrowser, which carries the browser inside it;",
+        f"  - copy {where} from a machine that already has it, into the same place here.",
+        "",
+        "The downloader said: " + ((said or (lines[-1] if lines else ""))[:300] or "nothing"),
+    ])
+
+
 def install_chromium(on_output=None, timeout: float = 1800) -> None:
     """Download Chromium with Playwright's own driver.
 
@@ -73,10 +97,15 @@ def install_chromium(on_output=None, timeout: float = 1800) -> None:
         if not line:
             continue
         lines.append(line)
-        if on_output:
+        # A stack frame is not progress. The driver prints a dozen of them when
+        # a download fails, and they went to the status line one after another,
+        # leaving "Current stage: at ChildProcess._handle.onexit" on screen.
+        if on_output and not line.startswith(("at ", "Error:", "code=")):
             on_output(line)
     if process.wait(timeout=timeout) != 0:
-        raise RuntimeError("Downloading Chromium failed: " + " ".join(lines[-4:]))
+        raise RuntimeError(_download_failed(lines))
     if not chromium_present():
         raise RuntimeError(
-            "Chromium reported as installed but is not in " + str(browsers_root()))
+            "The browser reported itself installed but is not in " + str(browsers_root())
+            + ". Copy that folder from a machine that has it, or use a build made with "
+              "-IncludeBrowser.")

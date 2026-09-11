@@ -181,3 +181,35 @@ def test_the_stamp_is_not_committed():
     """It describes one machine's build, and would conflict on every rebuild."""
     ignored = (Path(__file__).parents[2] / ".gitignore").read_text(encoding="utf-8")
     assert "build_stamp.txt" in ignored
+
+
+def test_a_blocked_browser_download_says_what_to_do_instead(monkeypatch, tmp_path):
+    """The driver answers with a Node stack trace, and that went on screen as
+    it stood: "at ChildProcess._handle.onexit (node:internal/child_process)".
+    It tells an operator nothing, and both ways out need no download."""
+    from camds_imds_importer.camds import browser_runtime
+
+    monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", str(tmp_path / "ms-playwright"))
+    message = browser_runtime._download_failed([
+        "Downloading Chromium 140.0 (playwright build v1187)",
+        "Error: Download failure, code=1",
+        "at ChildProcess.<anonymous> (C:\Temp\_MEI0000\playwright\driver\coreBundle.js:32015:32)",
+        "at ChildProcess.emit (node:events:519:28)",
+        "at ChildProcess._handle.onexit (node:internal/child_process:295:12)",
+    ])
+
+    assert "-IncludeBrowser" in message, "the build that carries the browser"
+    assert "HTTPS_PROXY" in message, "the usual reason a download is blocked"
+    assert str(tmp_path / "ms-playwright") in message, "where to copy a browser to"
+    assert "Error: Download failure, code=1" in message, "what the downloader said"
+    assert "onexit" not in message, "the stack frames are noise"
+
+
+def test_stack_frames_are_not_reported_as_progress():
+    """Each one replaced the status line while the download was failing."""
+    import inspect
+
+    from camds_imds_importer.camds import browser_runtime
+
+    source = inspect.getsource(browser_runtime.install_chromium)
+    assert 'line.startswith(("at ", "Error:", "code="))' in source

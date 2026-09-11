@@ -381,7 +381,7 @@ async def test_an_id_is_journalled_before_the_node_is_filled(tmp_path):
     # Resume reopens that id and finishes it; it never allocates a second one.
     camds._route = original
     before = len([n for n in camds.nodes.values() if n["treeDataNode"]["nodeType"] == 3])
-    await TreeImporter(backend(camds), tmp_path).run(ImportRequest(material()), resume=True)
+    await TreeImporter(backend(camds), tmp_path).run(ImportRequest(material()))
     after = [n for n in camds.nodes.values() if n["treeDataNode"]["nodeType"] == 3]
     assert len(after) == before == 1, "resume must not allocate a second Material"
     assert after[0]["data"]["cname"] == "Steel", "the fill the failure interrupted is completed"
@@ -544,7 +544,7 @@ async def test_resume_adds_only_the_substances_camds_does_not_already_hold(tmp_p
     assert len([n for n in camds.nodes.values() if n["treeDataNode"]["nodeType"] == 4]) == 1
 
     camds._route = original
-    await TreeImporter(backend(camds), tmp_path).run(ImportRequest(root), resume=True)
+    await TreeImporter(backend(camds), tmp_path).run(ImportRequest(root))
 
     saved = [n for n in camds.nodes.values() if n["treeDataNode"]["nodeType"] == 4]
     assert sorted(n["data"]["ccasCode"] for n in saved) == ["7439-89-6", "system"]
@@ -585,7 +585,7 @@ async def test_resume_recognises_a_system_group_camds_relabelled(tmp_path):
     assert system_node["treeDataNode"]["text"] == "杂质，不需申报", "CAMDS relabelled it"
 
     camds._route = original
-    await TreeImporter(backend(camds), tmp_path).run(ImportRequest(root), resume=True)
+    await TreeImporter(backend(camds), tmp_path).run(ImportRequest(root))
     saved = [n for n in camds.nodes.values() if n["treeDataNode"]["nodeType"] == 4]
     assert len(saved) == 2, "the relabelled group must not be added a second time"
 
@@ -611,7 +611,7 @@ async def test_resume_continues_the_parent_instead_of_spending_a_second_id(tmp_p
     assert len(roots) == 1, "only the parent exists so far"
 
     camds._route = original
-    result = await TreeImporter(backend(camds), tmp_path).run(ImportRequest(tree()), resume=True)
+    result = await TreeImporter(backend(camds), tmp_path).run(ImportRequest(tree()))
     assert result["identity"].split("/")[0] == roots[0], "the same MDS was finished"
     assert len(_components(camds)) == 2, "parent plus the one child, no duplicate parent"
 
@@ -632,7 +632,7 @@ async def test_resume_does_not_add_a_second_copy_of_a_child_already_saved(tmp_pa
     assert len(_components(camds)) == 2, "parent and child were written before the failure"
 
     camds._route = original
-    await TreeImporter(backend(camds), tmp_path).run(ImportRequest(tree()), resume=True)
+    await TreeImporter(backend(camds), tmp_path).run(ImportRequest(tree()))
     assert len(_components(camds)) == 2, "the saved child must not be added again"
     events = [json.loads(line) for line in next(tmp_path.glob("*.jsonl")).read_text(
         encoding="utf-8").splitlines()]
@@ -657,7 +657,7 @@ async def test_resume_fills_a_node_an_interrupted_run_left_unnamed(tmp_path):
     assert len(unnamed) == 1, "the child exists but carries no name"
 
     camds._route = original
-    await TreeImporter(backend(camds), tmp_path).run(ImportRequest(tree()), resume=True)
+    await TreeImporter(backend(camds), tmp_path).run(ImportRequest(tree()))
     assert len(_components(camds)) == 2, "no second child beside the unnamed one"
     assert sorted(n["data"]["cname"] for n in _components(camds)) == ["Child", "Parent"]
 

@@ -412,7 +412,7 @@ class OperationsWorker(QThread):
                                                             control=self.control,
                                                             ask=self.question.emit)
                                     task = asyncio.create_task(importer.run(
-                                        request, resume=options.get("resume", False),
+                                        request,
                                         reuse=options.get("reuse", True),
                                         release=options.get("release", False),
                                         components=options.get("components", "contents"),

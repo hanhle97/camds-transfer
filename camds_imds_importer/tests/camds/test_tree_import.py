@@ -258,10 +258,14 @@ async def test_error_preserves_journal_and_replay_does_not_create_duplicates(tmp
     events = [json.loads(line) for line in next(tmp_path.glob('*.jsonl')).read_text().splitlines()]
     assert events[-1]["event"] == "interrupted_or_failed"
     assert events[-1]["material_refs"]["m"] == ["CA_8_100", "0.01"]
-    calls_before = list(backend.calls)
-    with pytest.raises(RuntimeError, match="automatic replay is blocked"):
-        await TreeImporter(backend, tmp_path).run(request)
-    assert backend.calls == calls_before
+    # Starting it again continues the journal rather than replaying it. Over
+    # the browser this one stops at the first thing it cannot make safe: the
+    # Material whose id was allocated and never verified, which cannot be
+    # re-entered once the editor is gone. Nothing is created a second time.
+    again = FakeDraftBrowser()
+    with pytest.raises(RuntimeError, match="created but never verified"):
+        await TreeImporter(again, tmp_path).run(request)
+    assert not again.calls
 
 
 async def test_readback_failure_never_reports_complete(tmp_path):

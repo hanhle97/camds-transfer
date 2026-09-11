@@ -115,11 +115,6 @@ class ImportDialog(QDialog):
             "this run created are released; a reused or mapped one is somebody else's. "
             "CAMDS validates first, and a Material it reports errors on is not published.")
         layout.addWidget(self.release)
-        self.resume = QCheckBox(
-            "Resume an interrupted run of this exact tree and mapping "
-            "(skips Materials already verified; refuses if a draft editor was left half-built)")
-        self.resume.setChecked(False)
-        layout.addWidget(self.resume)
         buttons = QHBoxLayout()
         self.check = QPushButton("Validate and preview")
         self.start = QPushButton("Create + Save tree in CAMDS")

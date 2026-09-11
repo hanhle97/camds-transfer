@@ -518,7 +518,7 @@ class TreeImporter:
         # Materials this run created and published.
         self.released: list[str] = []
 
-    def _open_journal(self, request, resume, can_reenter=False):
+    def _open_journal(self, request, can_reenter=False):
         """Return (journal, ResumeState). Refuses any re-entry that cannot be made safe.
 
         `can_reenter` says whether the backend can reopen a saved MDS and add to
@@ -528,11 +528,13 @@ class TreeImporter:
         path = self.directory / (request.fingerprint + ".jsonl")
         if not path.exists():
             return ImportJournal(path, fingerprint=request.fingerprint), ResumeState()
+        # A journal for this exact tree and mapping means an earlier run of it
+        # stopped part-way. Continuing is the only safe thing to do with that -
+        # it reconciles against what CAMDS holds - so it is what happens, rather
+        # than something the operator has to know to ask for. Starting afresh is
+        # what refusing used to leave them with, and it was never the right
+        # answer: it would create a second copy of everything already saved.
         state = read_journal(path)
-        if not resume:
-            raise RuntimeError(
-                "This import already has a journal. Inspect output/camds_imports and saved IDs before retrying; "
-                "automatic replay is blocked. Choose Resume to continue from verified Materials only.")
         if state.finished:
             raise RuntimeError("This import already completed and was verified through Search / View; nothing to resume.")
         # A draft editor cannot be re-entered after the browser is gone, so a
@@ -732,9 +734,15 @@ class TreeImporter:
             + "Skip them and continue, or stop and answer them in "
             + str(answer_in.path if answer_in else "the substance mapping file") + " first?")
 
-    async def run(self, request: ImportRequest, resume: bool = False, reuse: bool = True,
+    async def run(self, request: ImportRequest, reuse: bool = True,
                   release: bool = False, components: str = "contents", root_ref=None):
         """Import the tree.
+
+        An earlier run of this exact tree and mapping is continued, not repeated:
+        Materials it verified are skipped, one it created but never finished is
+        reopened, and the tree is reconciled against what CAMDS holds. That is
+        not something to ask for - starting again would create a second copy of
+        everything already saved - so it needs no option.
 
         `reuse` searches CAMDS for a Material before making another one; off,
         everything in the report is created afresh. `release` publishes each
@@ -769,7 +777,10 @@ class TreeImporter:
         # whose Materials this run never makes: they are not steps it will do.
         by_number = await self._match_by_number(request) if components == "number" else {}
         plan = request.plan()
-        journal, state = self._open_journal(request, resume, await self.io.can_reenter_saved())
+        journal, state = self._open_journal(request, await self.io.can_reenter_saved())
+        # An earlier run of this exact tree left something behind, so this one
+        # continues it rather than starting again.
+        resume = bool(state.completed or state.incomplete_materials or state.root_ref)
         # Asked before the first Material is touched: being told where this run
         # writes is no use after it has started writing.
         given = await self._empty_root(request.root, root_ref, state)

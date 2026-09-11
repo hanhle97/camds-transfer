@@ -179,7 +179,7 @@ async def test_resume_skips_verified_materials_without_recreating_them(tmp_path)
 
     second = FakeDraftBrowser()
     events = []
-    result = await TreeImporter(second, tmp_path, progress=events.append).run(request, resume=True)
+    result = await TreeImporter(second, tmp_path, progress=events.append).run(request)
     assert ("create", "m") not in second.calls
     assert ("substance", "s") not in second.calls
     assert ("reference", "m") in second.calls
@@ -194,7 +194,7 @@ async def test_resume_refuses_when_a_material_was_created_but_never_verified(tmp
         await TreeImporter(backend, tmp_path).run(request)
     retry = FakeDraftBrowser()
     with pytest.raises(RuntimeError, match="created but never verified"):
-        await TreeImporter(retry, tmp_path).run(request, resume=True)
+        await TreeImporter(retry, tmp_path).run(request)
     assert not retry.calls
 
 
@@ -205,7 +205,7 @@ async def test_resume_refuses_after_the_parent_component_exists(tmp_path):
         await TreeImporter(backend, tmp_path).run(request)
     retry = FakeDraftBrowser()
     with pytest.raises(RuntimeError, match="parent Component CA_5_r/0.01 was already created"):
-        await TreeImporter(retry, tmp_path).run(request, resume=True)
+        await TreeImporter(retry, tmp_path).run(request)
     assert not retry.calls
 
 
@@ -213,10 +213,10 @@ async def test_completed_import_is_never_resumed_into_duplicates(tmp_path):
     request = ImportRequest(fixture_tree())
     await TreeImporter(FakeDraftBrowser(), tmp_path).run(request)
     retry = FakeDraftBrowser()
-    with pytest.raises(RuntimeError, match="already completed"):
-        await TreeImporter(retry, tmp_path).run(request, resume=True)
-    with pytest.raises(RuntimeError, match="automatic replay is blocked"):
-        await TreeImporter(retry, tmp_path).run(request)
+    for _ in range(2):
+        # However many times it is started, a finished import stays finished.
+        with pytest.raises(RuntimeError, match="already completed"):
+            await TreeImporter(retry, tmp_path).run(request)
     assert not retry.calls
 
 

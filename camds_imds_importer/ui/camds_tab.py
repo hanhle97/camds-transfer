@@ -160,7 +160,7 @@ class CamdsTab(QWidget):
         dialog = ImportDialog(self.parsed_root, self)
         if dialog.exec() and dialog.request:
             self.import_started.emit()
-            self._submit("import_tree", dialog.request, resume=dialog.resume.isChecked(),
+            self._submit("import_tree", dialog.request,
                          reuse=dialog.reuse.isChecked(),
                          release=dialog.release.isChecked(),
                          components="number" if dialog.by_number.isChecked() else "contents",

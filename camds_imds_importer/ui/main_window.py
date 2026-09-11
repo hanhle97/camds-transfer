@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pymupdf
 from PySide6.QtCore import QThread, Qt, QObject, QTimer
-from PySide6.QtGui import QAction
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox, QFileDialog, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QMainWindow,
@@ -24,6 +25,8 @@ from ..workers.camds_worker import CamdsLoginWorker
 from ..workers.discovery_worker import DiscoveryWorker
 from ..workers.parser_worker import ParserWorker
 from ..workers.validation_worker import ValidationWorker
+from ..build_info import build_stamp
+from . import support
 from .import_report import failure, summary
 from .logs_tab import LogsTab
 from .status_light import Lamp, StatusLight
@@ -316,7 +319,31 @@ class MainWindow(QMainWindow):
         check_action = QAction("Check substances against the catalogue", self)
         check_action.triggered.connect(self.check_substances)
         camds_menu.addAction(check_action)
-        self.menuBar().addMenu("Help")
+        help_menu = self.menuBar().addMenu("Help")
+        contact_action = QAction("Report a problem to the developer", self)
+        contact_action.triggered.connect(self.report_problem)
+        help_menu.addAction(contact_action)
+
+    def report_problem(self) -> None:
+        """Open a mail to the developer with what is always asked for anyway.
+
+        Nothing is sent from here. The mail opens in the machine's own mail
+        program, already carrying the build, the report and the tail of the log,
+        and the operator decides what to add and whether to send it.
+        """
+        url = QUrl(support.report(
+            build=build_stamp(),
+            report_name=self.source_path.name if self.source_path else "",
+            stage=self.stage_label.text().replace("Current stage: ", ""),
+            log=self.logs_tab.viewer.toPlainText()))
+        if QDesktopServices.openUrl(url):
+            self.logs_tab.append("INFO", f"Opened a problem report to {support.DEVELOPER}.")
+            return
+        # No mail program is registered, or the shell refused the link.
+        QMessageBox.information(
+            self, "Report a problem",
+            "This machine has no mail program set up to open the message." + chr(10) * 2
+            + f"Write to {support.DEVELOPER} instead, and paste the Logs tab into the mail.")
 
     def select_pdf(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(self, "Import IMDS PDF", "", "PDF files (*.pdf)")

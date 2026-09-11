@@ -27,6 +27,10 @@
 .PARAMETER Clean
     Discard the build virtual environment and start from scratch.
 
+.PARAMETER Publish
+    A share to put the build on, for the launcher to fetch. Needs -OneDir: the
+    launcher copies only the files that changed, which a single file cannot do.
+
 .EXAMPLE
     .\build.ps1
     One file, browser downloaded on first run.
@@ -39,7 +43,8 @@
 param(
     [switch]$IncludeBrowser,
     [switch]$OneDir,
-    [switch]$Clean
+    [switch]$Clean,
+    [string]$Publish
 )
 
 $ErrorActionPreference = "Stop"
@@ -251,6 +256,30 @@ $size = if ($OneDir) {
     (Get-Item $built).Length
 }
 Write-Host ("    {0}`n    {1:N0} MB" -f $built, ($size / 1MB)) -ForegroundColor Green
+
+if ($Publish) {
+    Step "Publishing to $Publish"
+    if (-not $OneDir) {
+        throw "-Publish needs -OneDir: the launcher copies the files that changed, and a single file has none to compare."
+    }
+    $target = Join-Path $Publish "app"
+    New-Item -ItemType Directory -Force $target | Out-Null
+    # /MIR so a file this build no longer has stops being published.
+    & robocopy.exe $built $target /MIR /R:2 /W:2 /NFL /NDL /NP | Out-Null
+    if ($LASTEXITCODE -ge 8) { throw "Copying to $target failed (robocopy $LASTEXITCODE)." }
+    Copy-Item -Force (Join-Path $root "packaging\launcher\launcher.ps1") $Publish
+    Copy-Item -Force (Join-Path $root "packaging\launcher\CAMDS-IMDS-Importer.cmd") $Publish
+    # Filled in here rather than by each person who takes a copy: the path is
+    # known at this moment, and typing it out again is a step that can go wrong.
+    [IO.File]::WriteAllText((Join-Path $Publish "share.txt"), $Publish,
+                            (New-Object Text.UTF8Encoding $false))
+    # Last, and only now: a launcher that read this while the copy was still
+    # running would fetch half a build and record it as the whole one.
+    [IO.File]::WriteAllText((Join-Path $Publish "version.txt"), $stamp,
+                            (New-Object Text.UTF8Encoding $false))
+    Note "Published $stamp"
+    Note "Hand out three files from ${Publish} - the .cmd, launcher.ps1 and share.txt."
+}
 
 Write-Host @"
 

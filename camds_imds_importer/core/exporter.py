@@ -24,24 +24,39 @@ def rows(document: MDSDocument) -> list[list[object]]:
     return result
 
 
-def export_excel(document: MDSDocument, path: Path) -> None:
-    values = [HEADERS, *rows(document)]
+def write_sheet(path: Path, headers, table, sheet_name: str = "Sheet1") -> None:
+    """Write one sheet of values as a spreadsheet Excel opens.
+
+    An .xlsx is a zip of XML, and writing it here is what keeps the build free
+    of a spreadsheet library. Anything with headers and rows uses this: the
+    parsed tree, and what CAMDS answered about a list of parts.
+    """
+    values = [list(headers), *[list(row) for row in table]]
+
     def cell(value: object, col: int, row: int) -> str:
         ref = ""
         n = col
         while n:
-            n, rem = divmod(n - 1, 26); ref = chr(65 + rem) + ref
+            n, rem = divmod(n - 1, 26)
+            ref = chr(65 + rem) + ref
         ref += str(row)
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             return f'<c r="{ref}"><v>{value}</v></c>'
         return f'<c r="{ref}" t="inlineStr"><is><t>{escape(str(value))}</t></is></c>'
-    sheet_rows = "".join(f'<row r="{r}">{"".join(cell(v, c, r) for c, v in enumerate(vals, 1))}</row>' for r, vals in enumerate(values, 1))
+
+    sheet_rows = "".join(
+        f'<row r="{r}">{"".join(cell(v, c, r) for c, v in enumerate(vals, 1))}</row>'
+        for r, vals in enumerate(values, 1))
     with ZipFile(path, "w", ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>')
         z.writestr("_rels/.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>')
-        z.writestr("xl/workbook.xml", '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="MDS Data" sheetId="1" r:id="rId1"/></sheets></workbook>')
+        z.writestr("xl/workbook.xml", f'<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="{escape(sheet_name)}" sheetId="1" r:id="rId1"/></sheets></workbook>')
         z.writestr("xl/_rels/workbook.xml.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>')
         z.writestr("xl/worksheets/sheet1.xml", f'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>{sheet_rows}</sheetData></worksheet>')
+
+
+def export_excel(document: MDSDocument, path: Path) -> None:
+    write_sheet(path, HEADERS, rows(document), "MDS Data")
 
 
 def export_pdf(document: MDSDocument, path: Path) -> None:

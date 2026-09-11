@@ -1,17 +1,19 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QGroupBox, QComboBox,
     QPlainTextEdit, QPushButton, QLabel, QTableWidget,
-    QTableWidgetItem, QAbstractItemView, QMessageBox,
+    QTableWidgetItem, QAbstractItemView, QMessageBox, QFileDialog,
 )
 
 from ..camds.import_control import brief
 from ..camds.import_plan import ImportRequest
 from ..camds import survey
+from ..core.exporter import write_sheet
 from ..workers.operations_worker import OperationsWorker
 from .import_dialog import ImportDialog
 
@@ -114,9 +116,22 @@ class CamdsTab(QWidget):
         self.results = QTableWidget()
         self.results.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         root.addWidget(self.results)
+        # Belongs to the results, not to the question: what is on screen stays
+        # worth keeping after the session it came from has ended, so this is
+        # outside the forms the session enables and disables.
+        keeping = QHBoxLayout()
+        keeping.addStretch(1)
+        self.save_button = QPushButton("Save results as Excel…")
+        self.save_button.setEnabled(False)
+        self.save_button.setToolTip(
+            "Write the table above to a spreadsheet: a list of parts to sort, filter and "
+            "send on, instead of one to read off the screen.")
+        keeping.addWidget(self.save_button)
+        root.addLayout(keeping)
         self.open_button.clicked.connect(self.open_session)
         self.close_button.clicked.connect(self.close_browser)
         self.search_button.clicked.connect(self.search)
+        self.save_button.clicked.connect(self.save_results)
         self.import_tree_button.clicked.connect(self.review_import)
         self.sign_in_button.clicked.connect(self.request_sign_in)
         self.pause_button.clicked.connect(self.pause_import)
@@ -165,6 +180,35 @@ class CamdsTab(QWidget):
                          release=dialog.release.isChecked(),
                          components="number" if dialog.by_number.isChecked() else "contents",
                          root_ref=dialog.root_reference())
+
+    def results_table(self):
+        """What the results table holds, headings first."""
+        headers = [self.results.horizontalHeaderItem(c).text()
+                   for c in range(self.results.columnCount())]
+        rows = [[(self.results.item(r, c).text() if self.results.item(r, c) else "")
+                 for c in range(self.results.columnCount())]
+                for r in range(self.results.rowCount())]
+        return headers, rows
+
+    def save_results(self) -> None:
+        """Write what CAMDS answered to a spreadsheet."""
+        headers, rows = self.results_table()
+        if not rows:
+            return
+        kind = self.search_kind.currentText()
+        suggested = f"camds-{kind.lower()}s-{datetime.now():%Y%m%d-%H%M}.xlsx"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save results as Excel", suggested, "Excel files (*.xlsx)")
+        if not path:
+            return
+        try:
+            write_sheet(Path(path), headers, rows, f"CAMDS {kind}s")
+        except OSError as exc:
+            QMessageBox.warning(self, "Save results",
+                                f"Could not write {path}:" + chr(10) + str(exc))
+            return
+        self.status.setText(f"{len(rows)} row(s) written to {path}")
+        self.log_message.emit(f"Search results written to {path}")
 
     def can_check_substances(self) -> str:
         """Why the catalogue check cannot run now, or "" if it can."""
@@ -390,6 +434,7 @@ class CamdsTab(QWidget):
                 for c, value in enumerate(row):
                     self.results.setItem(r, c, QTableWidgetItem(value))
             self.results.resizeColumnsToContents()
+            self.save_button.setEnabled(self.results.rowCount() > 0)
         self.status.setText(result.get("identity", "") + " " + result["note"])
         self.log_message.emit(result["note"])
         self.operation_status.emit(result["note"], True)
